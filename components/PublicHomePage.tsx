@@ -250,6 +250,8 @@ export function PublicHomePage() {
                     setCurrentPage('donate');
                   } else if (action.label === 'Loans') {
                     setCurrentPage('loans');
+                  } else if (action.label === 'Welfare') {
+                    setCurrentPage('welfare');
                   }
                 }}
               >

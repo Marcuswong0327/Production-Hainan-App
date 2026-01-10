@@ -9,7 +9,7 @@ import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
-import { CheckCircle, XCircle, FileText, Building2, Download } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 
@@ -28,6 +28,42 @@ interface Event {
   currentParticipants?: number;
 }
 
+interface WelfareApplication {
+  id: string;
+  userId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  submittedAt: string;
+  applicantNameChinese: string;
+  applicantNameEnglish: string;
+  icNumber: string;
+  age: string;
+  gender: string;
+  membershipNumber: string;
+  joinDate: string;
+  occupation: string;
+  monthlyIncome: string;
+  address: string;
+  postcode: string;
+  homePhone: string;
+  mobilePhone: string;
+  spouseNameChinese: string;
+  spouseNameEnglish: string;
+  spouseAge: string;
+  spouseOccupation: string;
+  spouseMonthlyIncome: string;
+  children: any[];
+  hasMedicalInsurance: 'yes' | 'no';
+  insuranceCompany: string;
+  hasOtherWelfareAid: 'yes' | 'no';
+  otherWelfareOrg: string;
+  requestType: 'general_welfare' | 'sub_association_donation';
+  applicationReason: string;
+  medicalDocument?: string;
+  recommendationLetter?: string;
+  recommendedBySubAssociation?: string;
+  rejectionReason?: string;
+}
+
 
 export function SuperAdminDashboard() {
   const { signOut } = useAuth();
@@ -36,6 +72,11 @@ export function SuperAdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [editingEvent, setEditingEvent] = useState<Event | null>(null);
   const [editMaxCapacity, setEditMaxCapacity] = useState('');
+  const [welfareApplications, setWelfareApplications] = useState<WelfareApplication[]>([]);
+  const [selectedWelfareApp, setSelectedWelfareApp] = useState<WelfareApplication | null>(null);
+  const [welfareFilter, setWelfareFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [showRejectWelfareDialog, setShowRejectWelfareDialog] = useState(false);
+  const [welfareRejectionReason, setWelfareRejectionReason] = useState('');
 
 
   // New Association Form
@@ -49,6 +90,14 @@ export function SuperAdminDashboard() {
   useEffect(() => {
     fetchPendingEvents();
     fetchAssociations();
+    fetchWelfareApplications();
+    
+    // Refresh welfare applications periodically
+    const interval = setInterval(() => {
+      fetchWelfareApplications();
+    }, 2000);
+    
+    return () => clearInterval(interval);
   }, []);
 
 
@@ -71,6 +120,16 @@ export function SuperAdminDashboard() {
       setAssociations(assocs);
     } catch (error) {
       console.error('Error fetching associations:', error);
+    }
+  };
+
+  const fetchWelfareApplications = async () => {
+    try {
+      // Frontend-only: Load from localStorage
+      const allApplications = JSON.parse(localStorage.getItem('myHainanWelfareApplications') || '[]');
+      setWelfareApplications(allApplications);
+    } catch (error) {
+      console.error('Error fetching welfare applications:', error);
     }
   };
 
@@ -273,6 +332,116 @@ export function SuperAdminDashboard() {
     generateExcelReport(selectedAssociationForExport);
   };
 
+  const handleApproveWelfare = async (applicationId: string) => {
+    try {
+      const allApplications = JSON.parse(localStorage.getItem('myHainanWelfareApplications') || '[]');
+      const index = allApplications.findIndex((a: any) => a.id === applicationId);
+      
+      if (index !== -1) {
+        allApplications[index].status = 'approved';
+        localStorage.setItem('myHainanWelfareApplications', JSON.stringify(allApplications));
+        fetchWelfareApplications();
+
+        // Notify the applicant
+        const notifications = JSON.parse(localStorage.getItem('myHainanNotifications') || '[]');
+        notifications.push({
+          id: Date.now().toString() + '_' + allApplications[index].userId,
+          userId: allApplications[index].userId,
+          title: 'Welfare Application Approved',
+          message: `Your welfare application has been approved. You will be contacted soon.`,
+          timestamp: new Date().toISOString(),
+          read: false,
+          type: 'system',
+        });
+
+        // Notify the recommended sub-association if applicable
+        if (allApplications[index].recommendedBySubAssociation) {
+          // Create notification for the sub-association
+          // In a real system, this would be sent to all sub_admin users of that association
+          const subAssocNotification = {
+            id: Date.now().toString() + '_sub_admin_' + allApplications[index].recommendedBySubAssociation,
+            userId: 'sub_admin_' + allApplications[index].recommendedBySubAssociation, // Special marker for sub-association notifications
+            title: 'Welfare Application Approved',
+            message: `A welfare application you recommended from ${allApplications[index].applicantNameEnglish || allApplications[index].applicantNameChinese} has been approved by the General Association.`,
+            timestamp: new Date().toISOString(),
+            read: false,
+            type: 'system',
+            associationName: allApplications[index].recommendedBySubAssociation,
+          };
+          
+          notifications.push(subAssocNotification);
+        }
+
+        localStorage.setItem('myHainanNotifications', JSON.stringify(notifications));
+        alert('Welfare application approved successfully!');
+      }
+    } catch (error) {
+      console.error('Error approving welfare application:', error);
+      alert('Failed to approve welfare application');
+    }
+  };
+
+  const handleRejectWelfare = async (applicationId: string, reason: string) => {
+    try {
+      const allApplications = JSON.parse(localStorage.getItem('myHainanWelfareApplications') || '[]');
+      const index = allApplications.findIndex((a: any) => a.id === applicationId);
+      
+      if (index !== -1) {
+        allApplications[index].status = 'rejected';
+        allApplications[index].rejectionReason = reason;
+        localStorage.setItem('myHainanWelfareApplications', JSON.stringify(allApplications));
+        fetchWelfareApplications();
+
+        // Notify the applicant
+        const notifications = JSON.parse(localStorage.getItem('myHainanNotifications') || '[]');
+        notifications.push({
+          id: Date.now().toString() + '_' + allApplications[index].userId,
+          userId: allApplications[index].userId,
+          title: 'Welfare Application Rejected',
+          message: `Your welfare application has been rejected. Reason: ${reason}`,
+          timestamp: new Date().toISOString(),
+          read: false,
+          type: 'system',
+        });
+        localStorage.setItem('myHainanNotifications', JSON.stringify(notifications));
+
+        setShowRejectWelfareDialog(false);
+        setWelfareRejectionReason('');
+        setSelectedWelfareApp(null);
+        alert('Welfare application rejected.');
+      }
+    } catch (error) {
+      console.error('Error rejecting welfare application:', error);
+      alert('Failed to reject welfare application');
+    }
+  };
+
+  const openWelfareRejectDialog = (application: WelfareApplication) => {
+    setSelectedWelfareApp(application);
+    setWelfareRejectionReason('');
+    setShowRejectWelfareDialog(true);
+  };
+
+  const viewWelfareDetails = (application: WelfareApplication) => {
+    setSelectedWelfareApp(application);
+  };
+
+  const downloadWelfareDocument = (base64Data: string, filename: string) => {
+    if (!base64Data) {
+      alert('Document not available');
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = base64Data;
+    link.download = filename;
+    link.click();
+  };
+
+  const filteredWelfareApplications = welfareApplications.filter(app => {
+    if (welfareFilter === 'all') return true;
+    return app.status === welfareFilter;
+  });
+
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -292,8 +461,9 @@ export function SuperAdminDashboard() {
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         <Tabs defaultValue="events" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 max-w-md">
+          <TabsList className="grid w-full grid-cols-4 max-w-2xl">
             <TabsTrigger value="events">Event Approval</TabsTrigger>
+            <TabsTrigger value="welfare">Welfare Applications</TabsTrigger>
             <TabsTrigger value="associations">Associations</TabsTrigger>
             <TabsTrigger value="export">Export Data</TabsTrigger>
           </TabsList>
@@ -379,6 +549,200 @@ export function SuperAdminDashboard() {
             </Card>
           </TabsContent>
 
+          {/* Welfare Applications Tab */}
+          <TabsContent value="welfare">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <HeartHandshake className="w-5 h-5" />
+                  Welfare Fund Applications
+                </CardTitle>
+                <CardDescription>
+                  Review and approve/reject welfare fund applications from members
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Filter Tabs */}
+                <div className="flex gap-2 border-b pb-4">
+                  <Button
+                    variant={welfareFilter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setWelfareFilter('all')}
+                  >
+                    All ({welfareApplications.length})
+                  </Button>
+                  <Button
+                    variant={welfareFilter === 'pending' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setWelfareFilter('pending')}
+                  >
+                    Pending ({welfareApplications.filter(a => a.status === 'pending').length})
+                  </Button>
+                  <Button
+                    variant={welfareFilter === 'approved' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setWelfareFilter('approved')}
+                  >
+                    Approved ({welfareApplications.filter(a => a.status === 'approved').length})
+                  </Button>
+                  <Button
+                    variant={welfareFilter === 'rejected' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setWelfareFilter('rejected')}
+                  >
+                    Rejected ({welfareApplications.filter(a => a.status === 'rejected').length})
+                  </Button>
+                </div>
+
+                {filteredWelfareApplications.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    No welfare applications found
+                  </div>
+                ) : (
+                  filteredWelfareApplications.map((application) => (
+                    <Card key={application.id}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <h3 className="font-semibold text-lg">
+                                {application.applicantNameEnglish || application.applicantNameChinese}
+                              </h3>
+                              <Badge
+                                variant={
+                                  application.status === 'approved'
+                                    ? 'default'
+                                    : application.status === 'rejected'
+                                    ? 'destructive'
+                                    : 'secondary'
+                                }
+                                className={
+                                  application.status === 'approved'
+                                    ? 'bg-green-600'
+                                    : application.status === 'rejected'
+                                    ? 'bg-red-600'
+                                    : 'bg-yellow-600'
+                                }
+                              >
+                                {application.status === 'approved'
+                                  ? 'Approved'
+                                  : application.status === 'rejected'
+                                  ? 'Rejected'
+                                  : 'Pending'}
+                              </Badge>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
+                              <div>IC Number: {application.icNumber}</div>
+                              <div>Age: {application.age}</div>
+                              <div>Gender: {application.gender}</div>
+                              <div>Membership #: {application.membershipNumber || 'N/A'}</div>
+                              <div>Occupation: {application.occupation || 'N/A'}</div>
+                              <div>Monthly Income: RM {application.monthlyIncome || '0'}</div>
+                              <div>Phone: {application.mobilePhone || application.homePhone || 'N/A'}</div>
+                              <div>
+                                Request Type: {application.requestType === 'general_welfare'
+                                  ? 'General Welfare Fund'
+                                  : 'Sub-Association Donation'}
+                              </div>
+                              {application.recommendedBySubAssociation && (
+                                <div className="col-span-2">
+                                  <Badge variant="outline" className="bg-blue-50">
+                                    <Building2 className="w-3 h-3 mr-1" />
+                                    Recommended by: {application.recommendedBySubAssociation}
+                                  </Badge>
+                                </div>
+                              )}
+                            </div>
+
+                            {application.applicationReason && (
+                              <div className="mb-3">
+                                <p className="text-sm font-semibold mb-1">Application Reason:</p>
+                                <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                                  {application.applicationReason.substring(0, 200)}
+                                  {application.applicationReason.length > 200 ? '...' : ''}
+                                </p>
+                              </div>
+                            )}
+
+                            <div className="flex gap-2 mb-2">
+                              {(application.medicalDocument || application.recommendationLetter) && (
+                                <>
+                                  {application.medicalDocument && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => downloadWelfareDocument(application.medicalDocument!, 'medical_document.pdf')}
+                                    >
+                                      <FileDown className="w-3 h-3 mr-1" />
+                                      Medical Doc
+                                    </Button>
+                                  )}
+                                  {application.recommendationLetter && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => downloadWelfareDocument(application.recommendationLetter!, 'recommendation_letter.pdf')}
+                                    >
+                                      <FileDown className="w-3 h-3 mr-1" />
+                                      Recommendation Letter
+                                    </Button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+
+                            <Badge variant="outline">
+                              Submitted: {new Date(application.submittedAt).toLocaleDateString()}
+                            </Badge>
+
+                            {application.status === 'rejected' && application.rejectionReason && (
+                              <div className="mt-3 bg-red-50 border border-red-200 p-3 rounded">
+                                <p className="text-sm font-semibold text-red-900 mb-1">Rejection Reason:</p>
+                                <p className="text-sm text-red-800">{application.rejectionReason}</p>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-col gap-2 ml-4">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => viewWelfareDetails(application)}
+                            >
+                              <Eye className="w-4 h-4 mr-1" />
+                              View Details
+                            </Button>
+                            {application.status === 'pending' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="default"
+                                  className="bg-green-600 hover:bg-green-700"
+                                  onClick={() => handleApproveWelfare(application.id)}
+                                >
+                                  <CheckCircle className="w-4 h-4 mr-1" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  className="bg-red-600 hover:bg-red-700 text-white"
+                                  onClick={() => openWelfareRejectDialog(application)}
+                                >
+                                  <XCircle className="w-4 h-4 mr-1" />
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* Associations Tab */}
           <TabsContent value="associations">
@@ -615,6 +979,201 @@ export function SuperAdminDashboard() {
             </Button>
             <Button variant="destructive" onClick={submitRejection}>
               Reject Event
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Welfare Application Details Dialog */}
+      <Dialog open={!!selectedWelfareApp && !showRejectWelfareDialog} onOpenChange={(open) => !open && setSelectedWelfareApp(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          {selectedWelfareApp && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Welfare Application Details</DialogTitle>
+                <DialogDescription>
+                  Full application information for {selectedWelfareApp.applicantNameEnglish || selectedWelfareApp.applicantNameChinese}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div>
+                  <h3 className="font-semibold mb-2">Applicant Information</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div><strong>Chinese Name:</strong> {selectedWelfareApp.applicantNameChinese}</div>
+                    <div><strong>English Name:</strong> {selectedWelfareApp.applicantNameEnglish}</div>
+                    <div><strong>IC Number:</strong> {selectedWelfareApp.icNumber}</div>
+                    <div><strong>Age:</strong> {selectedWelfareApp.age}</div>
+                    <div><strong>Gender:</strong> {selectedWelfareApp.gender}</div>
+                    <div><strong>Membership #:</strong> {selectedWelfareApp.membershipNumber || 'N/A'}</div>
+                    <div><strong>Join Date:</strong> {selectedWelfareApp.joinDate || 'N/A'}</div>
+                    <div><strong>Occupation:</strong> {selectedWelfareApp.occupation || 'N/A'}</div>
+                    <div><strong>Monthly Income:</strong> RM {selectedWelfareApp.monthlyIncome || '0'}</div>
+                    <div><strong>Address:</strong> {selectedWelfareApp.address || 'N/A'}</div>
+                    <div><strong>Postcode:</strong> {selectedWelfareApp.postcode || 'N/A'}</div>
+                    <div><strong>Home Phone:</strong> {selectedWelfareApp.homePhone || 'N/A'}</div>
+                    <div><strong>Mobile Phone:</strong> {selectedWelfareApp.mobilePhone || 'N/A'}</div>
+                  </div>
+                </div>
+
+                {(selectedWelfareApp.spouseNameChinese || selectedWelfareApp.spouseNameEnglish) && (
+                  <div>
+                    <h3 className="font-semibold mb-2">Spouse Information</h3>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div><strong>Chinese Name:</strong> {selectedWelfareApp.spouseNameChinese || 'N/A'}</div>
+                      <div><strong>English Name:</strong> {selectedWelfareApp.spouseNameEnglish || 'N/A'}</div>
+                      <div><strong>Age:</strong> {selectedWelfareApp.spouseAge || 'N/A'}</div>
+                      <div><strong>Occupation:</strong> {selectedWelfareApp.spouseOccupation || 'N/A'}</div>
+                      <div><strong>Monthly Income:</strong> RM {selectedWelfareApp.spouseMonthlyIncome || '0'}</div>
+                    </div>
+                  </div>
+                )}
+
+                {selectedWelfareApp.children && selectedWelfareApp.children.length > 0 && (
+                  <div>
+                    <h3 className="font-semibold mb-2">Children</h3>
+                    <div className="space-y-2">
+                      {selectedWelfareApp.children.map((child: any, index: number) => (
+                        <div key={index} className="border p-2 rounded text-sm">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div><strong>Name:</strong> {child.name}</div>
+                            <div><strong>Gender:</strong> {child.gender}</div>
+                            <div><strong>Age:</strong> {child.age}</div>
+                            <div><strong>Occupation/School:</strong> {child.occupationOrSchool}</div>
+                            <div><strong>Monthly Income:</strong> RM {child.monthlyIncome || '0'}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div>
+                  <h3 className="font-semibold mb-2">Application Details</h3>
+                  <div className="space-y-2 text-sm">
+                    <div><strong>Has Medical Insurance:</strong> {selectedWelfareApp.hasMedicalInsurance === 'yes' ? 'Yes' : 'No'}</div>
+                    {selectedWelfareApp.hasMedicalInsurance === 'yes' && selectedWelfareApp.insuranceCompany && (
+                      <div><strong>Insurance Company:</strong> {selectedWelfareApp.insuranceCompany}</div>
+                    )}
+                    <div><strong>Has Other Welfare Aid:</strong> {selectedWelfareApp.hasOtherWelfareAid === 'yes' ? 'Yes' : 'No'}</div>
+                    {selectedWelfareApp.hasOtherWelfareAid === 'yes' && selectedWelfareApp.otherWelfareOrg && (
+                      <div><strong>Other Welfare Organization:</strong> {selectedWelfareApp.otherWelfareOrg}</div>
+                    )}
+                    <div><strong>Request Type:</strong> {
+                      selectedWelfareApp.requestType === 'general_welfare'
+                        ? 'General Welfare Fund Allocation'
+                        : 'Sub-Association Donation Request'
+                    }</div>
+                    {selectedWelfareApp.recommendedBySubAssociation && (
+                      <div><strong>Recommended By:</strong> {selectedWelfareApp.recommendedBySubAssociation}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold mb-2">Application Reason</h3>
+                  <p className="text-sm bg-gray-50 p-3 rounded">{selectedWelfareApp.applicationReason}</p>
+                </div>
+
+                <div>
+                  <h3 className="font-semibold mb-2">Attachments</h3>
+                  <div className="flex gap-2">
+                    {selectedWelfareApp.medicalDocument && (
+                      <Button
+                        variant="outline"
+                        onClick={() => downloadWelfareDocument(selectedWelfareApp.medicalDocument!, 'medical_document.pdf')}
+                      >
+                        <FileDown className="w-4 h-4 mr-2" />
+                        Download Medical Document
+                      </Button>
+                    )}
+                    {selectedWelfareApp.recommendationLetter && (
+                      <Button
+                        variant="outline"
+                        onClick={() => downloadWelfareDocument(selectedWelfareApp.recommendationLetter!, 'recommendation_letter.pdf')}
+                      >
+                        <FileDown className="w-4 h-4 mr-2" />
+                        Download Recommendation Letter
+                      </Button>
+                    )}
+                    {!selectedWelfareApp.medicalDocument && !selectedWelfareApp.recommendationLetter && (
+                      <p className="text-sm text-gray-500">No attachments available</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setSelectedWelfareApp(null)}>
+                  Close
+                </Button>
+                {selectedWelfareApp.status === 'pending' && (
+                  <>
+                    <Button
+                      variant="default"
+                      className="bg-green-600 hover:bg-green-700"
+                      onClick={() => {
+                        handleApproveWelfare(selectedWelfareApp.id);
+                        setSelectedWelfareApp(null);
+                      }}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => {
+                        setShowRejectWelfareDialog(true);
+                      }}
+                    >
+                      Reject
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reject Welfare Application Dialog */}
+      <Dialog open={showRejectWelfareDialog} onOpenChange={setShowRejectWelfareDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Welfare Application</DialogTitle>
+            <DialogDescription>
+              Please provide a reason for rejecting this welfare application. The applicant will see this reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="welfare-rejection-reason">Rejection Reason *</Label>
+              <Textarea
+                id="welfare-rejection-reason"
+                placeholder="Enter the reason for rejection..."
+                value={welfareRejectionReason}
+                onChange={(e) => setWelfareRejectionReason(e.target.value)}
+                rows={4}
+                className="bg-white border-gray-300"
+                required
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowRejectWelfareDialog(false);
+              setWelfareRejectionReason('');
+              setSelectedWelfareApp(null);
+            }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => {
+              if (!welfareRejectionReason.trim()) {
+                alert('Please provide a rejection reason');
+                return;
+              }
+              if (selectedWelfareApp) {
+                handleRejectWelfare(selectedWelfareApp.id, welfareRejectionReason);
+              }
+            }}>
+              Reject Application
             </Button>
           </DialogFooter>
         </DialogContent>
