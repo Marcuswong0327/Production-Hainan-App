@@ -2,8 +2,8 @@ import { AuthProvider, useAuth } from './AuthContext';
 import { AuthPage } from './components/AuthPage';
 import { PublicHomePage } from './components/PublicHomePage';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
-import { SubAdminDashboard } from './components/SubAdminDashboard';
-import { SubEditorDashboard } from './components/SubEditorDashboard';
+// import { SubAdminDashboard } from './components/SubAdminDashboard';
+// import { SubEditorDashboard } from './components/SubEditorDashboard';
 
 // AppContent component - must be inside AuthProvider
 function AppContent() {
@@ -30,10 +30,10 @@ function AppContent() {
   switch (activeRole) {
     case 'super_admin':
       return <SuperAdminDashboard />;
-    case 'sub_admin':
-      return <SubAdminDashboard />;
-    case 'sub_editor':
-      return <SubEditorDashboard />;
+    // case 'sub_admin':
+    //   return <SubAdminDashboard />;
+    // case 'sub_editor':
+    //   return <SubEditorDashboard />;
     case 'public':
     default:
       return <PublicHomePage />;

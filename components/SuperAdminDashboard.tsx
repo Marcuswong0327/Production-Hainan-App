@@ -9,8 +9,12 @@ import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
-import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown, CreditCard, ExternalLink, UserPlus, DollarSign } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import type { StudyLoanApplication, LoanRecipient } from '../types/studyLoan';
+import { STUDY_LOAN_BUCKET, MONTHLY_PAYMENTS } from '../types/studyLoan';
+import { AddLoanRecipientPage } from './AddLoanRecipientPage';
 
 
 interface Event {
@@ -64,9 +68,13 @@ interface WelfareApplication {
   rejectionReason?: string;
 }
 
-
 export function SuperAdminDashboard() {
-  const { signOut } = useAuth();
+  const { signOut, changePassword } = useAuth();
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState('');
   const [pendingEvents, setPendingEvents] = useState<Event[]>([]);
   const [associations, setAssociations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -78,6 +86,18 @@ export function SuperAdminDashboard() {
   const [showRejectWelfareDialog, setShowRejectWelfareDialog] = useState(false);
   const [welfareRejectionReason, setWelfareRejectionReason] = useState('');
 
+  // Study Loan Applications
+  const [studyLoanApplications, setStudyLoanApplications] = useState<StudyLoanApplication[]>([]);
+  const [selectedStudyLoan, setSelectedStudyLoan] = useState<StudyLoanApplication | null>(null);
+  const [studyLoanFilter, setStudyLoanFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  const [showRejectStudyLoanDialog, setShowRejectStudyLoanDialog] = useState(false);
+  const [studyLoanRejectionReason, setStudyLoanRejectionReason] = useState('');
+
+  // Manual loan recipients (track students who got the loan)
+  const [loanRecipients, setLoanRecipients] = useState<LoanRecipient[]>([]);
+  const [showAddRecipientPage, setShowAddRecipientPage] = useState(false);
+  const [selectedRecipientForPayment, setSelectedRecipientForPayment] = useState<LoanRecipient | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
 
   // New Association Form
   const [newAssociation, setNewAssociation] = useState({
@@ -91,12 +111,15 @@ export function SuperAdminDashboard() {
     fetchPendingEvents();
     fetchAssociations();
     fetchWelfareApplications();
-    
-    // Refresh welfare applications periodically
+    fetchStudyLoanApplications();
+    fetchLoanRecipients();
+
     const interval = setInterval(() => {
       fetchWelfareApplications();
-    }, 2000);
-    
+      fetchStudyLoanApplications();
+      fetchLoanRecipients();
+    }, 5000);
+
     return () => clearInterval(interval);
   }, []);
 
@@ -125,11 +148,262 @@ export function SuperAdminDashboard() {
 
   const fetchWelfareApplications = async () => {
     try {
-      // Frontend-only: Load from localStorage
       const allApplications = JSON.parse(localStorage.getItem('myHainanWelfareApplications') || '[]');
       setWelfareApplications(allApplications);
     } catch (error) {
       console.error('Error fetching welfare applications:', error);
+    }
+  };
+
+  const fetchStudyLoanApplications = async () => {
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { data, error } = await supabase
+          .from('study_loan_applications')
+          .select('*')
+          .order('applied_at', { ascending: false });
+        if (!error) setStudyLoanApplications((data as StudyLoanApplication[]) || []);
+      } else {
+        const raw = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+        const mapped: StudyLoanApplication[] = raw.map((a: any) => ({
+          id: a.id,
+          user_id: a.userId,
+          association: a.association,
+          full_name: a.fullName,
+          age: a.age,
+          university: a.university,
+          courses: a.courses,
+          admission_date: a.admissionDate,
+          expected_graduation_date: a.expectedGraduationDate,
+          phone_number: a.phoneNumber,
+          offer_letter_path: null,
+          ic_front_path: null,
+          ic_back_path: null,
+          guarantor_ic_front_path: null,
+          guarantor_ic_back_path: null,
+          guarantor_relationship: a.guarantorRelationship,
+          guarantor_phone_number: a.guarantorPhoneNumber,
+          loan_type: a.loanType,
+          loan_amount: a.loanAmount,
+          status: a.status,
+          applied_at: a.appliedDate,
+          reviewed_at: null,
+          rejection_reason: a.rejectionReason || null,
+          created_at: a.appliedDate,
+          updated_at: a.appliedDate,
+        }));
+        setStudyLoanApplications(mapped);
+      }
+    } catch (error) {
+      console.error('Error fetching study loan applications:', error);
+    }
+  };
+
+  const notifyStudyLoanApplicant = (userId: string, approved: boolean, rejectionReason?: string) => {
+    const notifications = JSON.parse(localStorage.getItem('myHainanNotifications') || '[]');
+    notifications.push({
+      id: `study_loan_${Date.now()}_${userId}`,
+      userId,
+      title: approved ? 'Study Loan Approved' : 'Study Loan Rejected',
+      message: approved
+        ? 'Your study loan application has been approved. You can view status and start repayment from the Loans section.'
+        : `Your study loan application was not approved.${rejectionReason ? ` Reason: ${rejectionReason}` : ''}`,
+      timestamp: new Date().toISOString(),
+      read: false,
+      type: 'system',
+    });
+    localStorage.setItem('myHainanNotifications', JSON.stringify(notifications));
+  };
+
+  const handleApproveStudyLoan = async (applicationId: string) => {
+    const app = studyLoanApplications.find(a => a.id === applicationId);
+    const userId = app?.user_id;
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { error } = await supabase
+          .from('study_loan_applications')
+          .update({ status: 'approved', reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('id', applicationId);
+        if (!error) {
+          if (userId) notifyStudyLoanApplicant(userId, true);
+          fetchStudyLoanApplications();
+          setSelectedStudyLoan(null);
+          alert('Study loan application approved. Applicant will see a notification on their home.');
+        } else throw error;
+      } else {
+        const all = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+        const idx = all.findIndex((a: any) => a.id === applicationId);
+        if (idx !== -1) {
+          all[idx].status = 'approved';
+          if (userId) notifyStudyLoanApplicant(userId, true);
+          localStorage.setItem('myHainanLoanApplications', JSON.stringify(all));
+          fetchStudyLoanApplications();
+          setSelectedStudyLoan(null);
+          alert('Study loan application approved. Applicant will see a notification on their home.');
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Failed to approve study loan application.');
+    }
+  };
+
+  const handleRejectStudyLoan = async (applicationId: string, reason: string) => {
+    const app = studyLoanApplications.find(a => a.id === applicationId);
+    const userId = app?.user_id;
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { error } = await supabase
+          .from('study_loan_applications')
+          .update({ status: 'rejected', rejection_reason: reason, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq('id', applicationId);
+        if (!error) {
+          if (userId) notifyStudyLoanApplicant(userId, false, reason);
+          fetchStudyLoanApplications();
+          setShowRejectStudyLoanDialog(false);
+          setStudyLoanRejectionReason('');
+          setSelectedStudyLoan(null);
+          alert('Study loan application rejected. Applicant will see the reason on their status page and in notifications.');
+        } else throw error;
+      } else {
+        const all = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+        const idx = all.findIndex((a: any) => a.id === applicationId);
+        if (idx !== -1) {
+          all[idx].status = 'rejected';
+          all[idx].rejectionReason = reason;
+          if (userId) notifyStudyLoanApplicant(userId, false, reason);
+          localStorage.setItem('myHainanLoanApplications', JSON.stringify(all));
+          fetchStudyLoanApplications();
+          setShowRejectStudyLoanDialog(false);
+          setStudyLoanRejectionReason('');
+          setSelectedStudyLoan(null);
+          alert('Study loan application rejected. Applicant will see the reason on their status page and in notifications.');
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Failed to reject study loan application.');
+    }
+  };
+
+  const openStudyLoanRejectDialog = (app: StudyLoanApplication) => {
+    setSelectedStudyLoan(app);
+    setStudyLoanRejectionReason('');
+    setShowRejectStudyLoanDialog(true);
+  };
+
+  const viewStudyLoanDetails = (app: StudyLoanApplication) => {
+    setSelectedStudyLoan(app);
+  };
+
+  const filteredStudyLoanApplications = studyLoanApplications.filter(app => {
+    if (studyLoanFilter === 'all') return true;
+    return app.status === studyLoanFilter;
+  });
+
+  const openStudyLoanDocument = async (path: string | null, label: string) => {
+    if (!path) return;
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.storage.from(STUDY_LOAN_BUCKET).createSignedUrl(path, 3600);
+        if (error) {
+          alert(`Could not open ${label}: ${error.message}`);
+          return;
+        }
+        if (data?.signedUrl) window.open(data.signedUrl, '_blank');
+      } catch (e: any) {
+        alert(`Could not open ${label}: ${e?.message || 'Unknown error'}`);
+      }
+    } else {
+      alert('Documents are stored in Supabase. Configure Supabase to open files.');
+    }
+  };
+
+  const fetchLoanRecipients = async () => {
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { data, error } = await supabase.from('study_loan_recipients').select('*').order('created_at', { ascending: false });
+        if (!error) setLoanRecipients((data as LoanRecipient[]) || []);
+      } else {
+        const raw = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
+        setLoanRecipients(raw);
+      }
+    } catch (e) {
+      console.error('Fetch loan recipients:', e);
+    }
+  };
+
+  const saveLoanRecipient = async (newRecipient: LoanRecipient) => {
+    if (isSupabaseConfigured() && supabase) {
+      const { error } = await supabase.from('study_loan_recipients').insert({
+        id: newRecipient.id,
+        full_name: newRecipient.full_name,
+        email: newRecipient.email,
+        phone_number: newRecipient.phone_number,
+        association: newRecipient.association,
+        university: newRecipient.university,
+        courses: newRecipient.courses,
+        admission_date: newRecipient.admission_date || null,
+        expected_graduation_date: newRecipient.expected_graduation_date || null,
+        loan_type: newRecipient.loan_type || null,
+        loan_amount: newRecipient.loan_amount,
+        total_paid: newRecipient.total_paid ?? 0,
+        payments_made: newRecipient.payments_made ?? 0,
+        status: newRecipient.status,
+        guarantor_relationship: newRecipient.guarantor_relationship || null,
+        guarantor_phone_number: newRecipient.guarantor_phone_number || null,
+        offer_letter_path: newRecipient.offer_letter_path || null,
+        ic_front_path: newRecipient.ic_front_path || null,
+        ic_back_path: newRecipient.ic_back_path || null,
+        guarantor_ic_front_path: newRecipient.guarantor_ic_front_path || null,
+        guarantor_ic_back_path: newRecipient.guarantor_ic_back_path || null,
+        ic_front_text: newRecipient.ic_front_text || null,
+        ic_back_text: newRecipient.ic_back_text || null,
+        guarantor_ic_text: newRecipient.guarantor_ic_text || null,
+        notes: newRecipient.notes || null,
+        updated_at: newRecipient.updated_at,
+      });
+      if (error) throw error;
+    } else {
+      const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
+      list.unshift(newRecipient);
+      localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
+    }
+    setLoanRecipients(prev => [newRecipient, ...prev]);
+  };
+
+  const handleRecordPayment = async () => {
+    if (!selectedRecipientForPayment) return;
+    const amount = parseInt(paymentAmount, 10);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Enter a valid payment amount.');
+      return;
+    }
+    const newTotalPaid = selectedRecipientForPayment.total_paid + amount;
+    const newPaymentsMade = selectedRecipientForPayment.payments_made + 1;
+    const newStatus = newTotalPaid >= selectedRecipientForPayment.loan_amount ? 'completed' : 'active';
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { error } = await supabase.from('study_loan_recipients').update({
+          total_paid: newTotalPaid,
+          payments_made: newPaymentsMade,
+          status: newStatus,
+          updated_at: new Date().toISOString(),
+        }).eq('id', selectedRecipientForPayment.id);
+        if (error) throw error;
+      } else {
+        const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
+        const idx = list.findIndex((r: LoanRecipient) => r.id === selectedRecipientForPayment.id);
+        if (idx !== -1) {
+          list[idx] = { ...list[idx], total_paid: newTotalPaid, payments_made: newPaymentsMade, status: newStatus, updated_at: new Date().toISOString() };
+          localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
+        }
+      }
+      setLoanRecipients(prev => prev.map(r => r.id === selectedRecipientForPayment.id ? { ...r, total_paid: newTotalPaid, payments_made: newPaymentsMade, status: newStatus, updated_at: new Date().toISOString() } : r));
+      setSelectedRecipientForPayment(null);
+      setPaymentAmount('');
+    } catch (err: any) {
+      alert(err?.message || 'Failed to record payment.');
     }
   };
 
@@ -443,6 +717,15 @@ export function SuperAdminDashboard() {
   });
 
 
+  if (showAddRecipientPage) {
+    return (
+      <AddLoanRecipientPage
+        onBack={() => setShowAddRecipientPage(false)}
+        onSubmit={saveLoanRecipient}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -452,273 +735,280 @@ export function SuperAdminDashboard() {
             <h1 className="font-bold text-2xl">Super Admin Dashboard</h1>
             <p className="text-sm text-gray-600">总会管理中心</p>
           </div>
-          <Button variant="outline" onClick={signOut}>
-            Sign Out
-          </Button>
+          <div className="flex gap-2">
+            {isSupabaseConfigured() && changePassword && (
+              <Button variant="outline" size="sm" onClick={() => { setShowChangePassword(true); setNewPassword(''); setConfirmPassword(''); setChangePasswordError(''); }}>
+                Change password
+              </Button>
+            )}
+            <Button variant="outline" onClick={signOut}>
+              Sign Out
+            </Button>
+          </div>
         </div>
       </div>
 
+      {/* Change password dialog */}
+      {showChangePassword && changePassword && (
+        <Dialog open={showChangePassword} onOpenChange={setShowChangePassword}>
+          <DialogContent className="bg-white text-gray-900">
+            <DialogHeader>
+              <DialogTitle>Change password</DialogTitle>
+              <DialogDescription>
+                Set a new password for your super admin account. You will need to sign in again with the new password.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="new-password">New password</Label>
+                <Input
+                  id="new-password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => { setNewPassword(e.target.value); setChangePasswordError(''); }}
+                  placeholder="Enter new password"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm new password</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); setChangePasswordError(''); }}
+                  placeholder="Confirm new password"
+                  required
+                />
+              </div>
+              {changePasswordError && <p className="text-sm text-red-600">{changePasswordError}</p>}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowChangePassword(false)}>Cancel</Button>
+              <Button
+                onClick={async () => {
+                  if (newPassword.length < 6) {
+                    setChangePasswordError('Password must be at least 6 characters');
+                    return;
+                  }
+                  if (newPassword !== confirmPassword) {
+                    setChangePasswordError('Passwords do not match');
+                    return;
+                  }
+                  setChangePasswordLoading(true);
+                  setChangePasswordError('');
+                  try {
+                    await changePassword(newPassword);
+                    setShowChangePassword(false);
+                    alert('Password updated. You can sign in with your new password next time.');
+                    await signOut();
+                  } catch (e: any) {
+                    setChangePasswordError(e?.message || 'Failed to update password');
+                  } finally {
+                    setChangePasswordLoading(false);
+                  }
+                }}
+                disabled={changePasswordLoading || !newPassword || !confirmPassword}
+              >
+                {changePasswordLoading ? 'Updating...' : 'Update password'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <Tabs defaultValue="events" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 max-w-2xl">
-            <TabsTrigger value="events">Event Approval</TabsTrigger>
-            <TabsTrigger value="welfare">Welfare Applications</TabsTrigger>
-            <TabsTrigger value="associations">Associations</TabsTrigger>
-            <TabsTrigger value="export">Export Data</TabsTrigger>
+        <Tabs defaultValue="studyLoans" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2 max-w-xl">
+            {/* <TabsTrigger value="events">Event Approval</TabsTrigger> */}
+            <TabsTrigger value="studyLoans">Study Loan Applications</TabsTrigger>
+            <TabsTrigger value="recipients">Loan Recipients</TabsTrigger>
+            {/* <TabsTrigger value="welfare">Welfare Applications</TabsTrigger> */}
+            {/* <TabsTrigger value="associations">Associations</TabsTrigger> */}
+            {/* <TabsTrigger value="export">Export Data</TabsTrigger> */}
           </TabsList>
 
-
-          {/* Event Approval Tab */}
-          <TabsContent value="events">
-            <Card>
-              <CardHeader>
-                <CardTitle>Pending Events for Approval</CardTitle>
-                <CardDescription>
-                  Review and approve/reject events submitted by Sub-Associations
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {pendingEvents.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    No pending events to review
-                  </div>
-                ) : (
-                  pendingEvents.map((event: any) => (
-                    <Card key={event.id}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <h3 className="font-semibold text-lg mb-2">{event.title}</h3>
-                            {event.associationName && (
-                              <div className="mb-2">
-                                <Badge variant="outline" className="bg-blue-50">
-                                  <Building2 className="w-3 h-3 mr-1" />
-                                  {event.associationName}
-                                </Badge>
-                              </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
-                              <div>Date: {event.date}</div>
-                              <div>Time: {event.time}</div>
-                              <div>Venue: {event.venue}</div>
-                              <div>Price: RM {event.price}</div>
-                              <div>Max Capacity: {event.maxCapacity || 'Not set'}</div>
-                              <div>Current Participants: {event.currentParticipants || 0}</div>
-                            </div>
-                            {event.maxCapacity && (
-                              <div className="mb-3">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openEditCapacityDialog(event)}
-                                >
-                                  Edit Max Capacity
-                                </Button>
-                              </div>
-                            )}
-                            <p className="text-sm text-gray-700 mb-3">{event.description}</p>
-                            <Badge variant="outline">Submitted: {new Date(event.createdAt).toLocaleDateString()}</Badge>
-                          </div>
-                          <div className="flex gap-2 ml-4">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              className="bg-green-600 hover:bg-green-700"
-                              onClick={() => handleApproveEvent(event.id)}
-                            >
-                              <CheckCircle className="w-4 h-4 mr-1" />
-                              Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="bg-red-600 hover:bg-red-700 text-white"
-                              onClick={() => openRejectDialog(event.id)}
-                            >
-                              <XCircle className="w-4 h-4 mr-1" />
-                              Reject
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Welfare Applications Tab */}
-          <TabsContent value="welfare">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <HeartHandshake className="w-5 h-5" />
-                  Welfare Fund Applications
-                </CardTitle>
-                <CardDescription>
-                  Review and approve/reject welfare fund applications from members
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Filter Tabs */}
-                <div className="flex gap-2 border-b pb-4">
-                  <Button
-                    variant={welfareFilter === 'all' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setWelfareFilter('all')}
-                  >
-                    All ({welfareApplications.length})
-                  </Button>
-                  <Button
-                    variant={welfareFilter === 'pending' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setWelfareFilter('pending')}
-                  >
-                    Pending ({welfareApplications.filter(a => a.status === 'pending').length})
-                  </Button>
-                  <Button
-                    variant={welfareFilter === 'approved' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setWelfareFilter('approved')}
-                  >
-                    Approved ({welfareApplications.filter(a => a.status === 'approved').length})
-                  </Button>
-                  <Button
-                    variant={welfareFilter === 'rejected' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setWelfareFilter('rejected')}
-                  >
-                    Rejected ({welfareApplications.filter(a => a.status === 'rejected').length})
-                  </Button>
-                </div>
-
-                {filteredWelfareApplications.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500">
-                    No welfare applications found
-                  </div>
-                ) : (
-                  filteredWelfareApplications.map((application) => (
-                    <Card key={application.id}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-3 mb-2">
-                              <h3 className="font-semibold text-lg">
-                                {application.applicantNameEnglish || application.applicantNameChinese}
-                              </h3>
-                              <Badge
-                                variant={
-                                  application.status === 'approved'
-                                    ? 'default'
-                                    : application.status === 'rejected'
-                                    ? 'destructive'
-                                    : 'secondary'
-                                }
-                                className={
-                                  application.status === 'approved'
-                                    ? 'bg-green-600'
-                                    : application.status === 'rejected'
-                                    ? 'bg-red-600'
-                                    : 'bg-yellow-600'
-                                }
-                              >
-                                {application.status === 'approved'
-                                  ? 'Approved'
-                                  : application.status === 'rejected'
-                                  ? 'Rejected'
-                                  : 'Pending'}
-                              </Badge>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
-                              <div>IC Number: {application.icNumber}</div>
-                              <div>Age: {application.age}</div>
-                              <div>Gender: {application.gender}</div>
-                              <div>Membership #: {application.membershipNumber || 'N/A'}</div>
-                              <div>Occupation: {application.occupation || 'N/A'}</div>
-                              <div>Monthly Income: RM {application.monthlyIncome || '0'}</div>
-                              <div>Phone: {application.mobilePhone || application.homePhone || 'N/A'}</div>
-                              <div>
-                                Request Type: {application.requestType === 'general_welfare'
-                                  ? 'General Welfare Fund'
-                                  : 'Sub-Association Donation'}
-                              </div>
-                              {application.recommendedBySubAssociation && (
-                                <div className="col-span-2">
+          {/* Event Approval Tab - commented out */}
+          {false && (
+            <TabsContent value="events">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Pending Events for Approval</CardTitle>
+                  <CardDescription>
+                    Review and approve/reject events submitted by Sub-Associations
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {pendingEvents.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">
+                      No pending events to review
+                    </div>
+                  ) : (
+                    pendingEvents.map((event: any) => (
+                      <Card key={event.id}>
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h3 className="font-semibold text-lg mb-2">{event.title}</h3>
+                              {event.associationName && (
+                                <div className="mb-2">
                                   <Badge variant="outline" className="bg-blue-50">
                                     <Building2 className="w-3 h-3 mr-1" />
-                                    Recommended by: {application.recommendedBySubAssociation}
+                                    {event.associationName}
                                   </Badge>
                                 </div>
                               )}
-                            </div>
-
-                            {application.applicationReason && (
-                              <div className="mb-3">
-                                <p className="text-sm font-semibold mb-1">Application Reason:</p>
-                                <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded">
-                                  {application.applicationReason.substring(0, 200)}
-                                  {application.applicationReason.length > 200 ? '...' : ''}
-                                </p>
+                              <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
+                                <div>Date: {event.date}</div>
+                                <div>Time: {event.time}</div>
+                                <div>Venue: {event.venue}</div>
+                                <div>Price: RM {event.price}</div>
+                                <div>Max Capacity: {event.maxCapacity || 'Not set'}</div>
+                                <div>Current Participants: {event.currentParticipants || 0}</div>
                               </div>
-                            )}
-
-                            <div className="flex gap-2 mb-2">
-                              {(application.medicalDocument || application.recommendationLetter) && (
-                                <>
-                                  {application.medicalDocument && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => downloadWelfareDocument(application.medicalDocument!, 'medical_document.pdf')}
-                                    >
-                                      <FileDown className="w-3 h-3 mr-1" />
-                                      Medical Doc
-                                    </Button>
-                                  )}
-                                  {application.recommendationLetter && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => downloadWelfareDocument(application.recommendationLetter!, 'recommendation_letter.pdf')}
-                                    >
-                                      <FileDown className="w-3 h-3 mr-1" />
-                                      Recommendation Letter
-                                    </Button>
-                                  )}
-                                </>
+                              {event.maxCapacity && (
+                                <div className="mb-3">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openEditCapacityDialog(event)}
+                                  >
+                                    Edit Max Capacity
+                                  </Button>
+                                </div>
                               )}
+                              <p className="text-sm text-gray-700 mb-3">{event.description}</p>
+                              <Badge variant="outline">Submitted: {new Date(event.createdAt).toLocaleDateString()}</Badge>
                             </div>
-
-                            <Badge variant="outline">
-                              Submitted: {new Date(application.submittedAt).toLocaleDateString()}
-                            </Badge>
-
-                            {application.status === 'rejected' && application.rejectionReason && (
-                              <div className="mt-3 bg-red-50 border border-red-200 p-3 rounded">
-                                <p className="text-sm font-semibold text-red-900 mb-1">Rejection Reason:</p>
-                                <p className="text-sm text-red-800">{application.rejectionReason}</p>
-                              </div>
-                            )}
+                            <div className="flex gap-2 ml-4">
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="bg-green-600 hover:bg-green-700"
+                                onClick={() => handleApproveEvent(event.id)}
+                              >
+                                <CheckCircle className="w-4 h-4 mr-1" />
+                                Approve
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                className="bg-red-600 hover:bg-red-700 text-white"
+                                onClick={() => openRejectDialog(event.id)}
+                              >
+                                <XCircle className="w-4 h-4 mr-1" />
+                                Reject
+                              </Button>
+                            </div>
                           </div>
-                          <div className="flex flex-col gap-2 ml-4">
+                        </CardContent>
+                      </Card>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+
+          {/* Study Loan Applications Tab */}
+          <TabsContent value="studyLoans">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CreditCard className="w-5 h-5" />
+                  Study Loan Applications
+                </CardTitle>
+                <CardDescription>
+                  Review and approve/reject student study loan applications. Applicants will see status and can repay once approved.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2 border-b pb-4 flex-wrap">
+                  <Button
+                    variant={studyLoanFilter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStudyLoanFilter('all')}
+                  >
+                    All ({studyLoanApplications.length})
+                  </Button>
+                  <Button
+                    variant={studyLoanFilter === 'pending' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStudyLoanFilter('pending')}
+                  >
+                    Pending ({studyLoanApplications.filter(a => a.status === 'pending').length})
+                  </Button>
+                  <Button
+                    variant={studyLoanFilter === 'approved' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStudyLoanFilter('approved')}
+                  >
+                    Approved ({studyLoanApplications.filter(a => a.status === 'approved').length})
+                  </Button>
+                  <Button
+                    variant={studyLoanFilter === 'rejected' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setStudyLoanFilter('rejected')}
+                  >
+                    Rejected ({studyLoanApplications.filter(a => a.status === 'rejected').length})
+                  </Button>
+                </div>
+                {filteredStudyLoanApplications.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    No study loan applications found
+                  </div>
+                ) : (
+                  filteredStudyLoanApplications.map((app) => (
+                    <Card key={app.id}>
+                      <CardContent className="p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <h3 className="font-semibold text-lg truncate">{app.full_name}</h3>
+                              <Badge
+                                variant="secondary"
+                                className={
+                                  app.status === 'approved'
+                                    ? 'bg-green-600'
+                                    : app.status === 'rejected'
+                                      ? 'bg-red-600'
+                                      : 'bg-yellow-600'
+                                }
+                              >
+                                {app.status}
+                              </Badge>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-2">
+                              <div>{app.university}</div>
+                              <div>RM {app.loan_amount?.toLocaleString()}</div>
+                              <div className="col-span-2">
+                                <Badge variant="outline" className="bg-blue-50">
+                                  <Building2 className="w-3 h-3 mr-1" />
+                                  {app.association}
+                                </Badge>
+                              </div>
+                            </div>
+                            <Badge variant="outline">
+                              Applied: {new Date(app.applied_at).toLocaleDateString()}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-col gap-2 ml-4 shrink-0">
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => viewWelfareDetails(application)}
+                              onClick={() => viewStudyLoanDetails(app)}
                             >
                               <Eye className="w-4 h-4 mr-1" />
                               View Details
                             </Button>
-                            {application.status === 'pending' && (
+                            {app.status === 'pending' && (
                               <>
                                 <Button
                                   size="sm"
                                   variant="default"
                                   className="bg-green-600 hover:bg-green-700"
-                                  onClick={() => handleApproveWelfare(application.id)}
+                                  onClick={() => handleApproveStudyLoan(app.id)}
                                 >
                                   <CheckCircle className="w-4 h-4 mr-1" />
                                   Approve
@@ -727,7 +1017,7 @@ export function SuperAdminDashboard() {
                                   size="sm"
                                   variant="destructive"
                                   className="bg-red-600 hover:bg-red-700 text-white"
-                                  onClick={() => openWelfareRejectDialog(application)}
+                                  onClick={() => openStudyLoanRejectDialog(app)}
                                 >
                                   <XCircle className="w-4 h-4 mr-1" />
                                   Reject
@@ -744,161 +1034,288 @@ export function SuperAdminDashboard() {
             </Card>
           </TabsContent>
 
-          {/* Associations Tab */}
-          <TabsContent value="associations">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Create New Association */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Create New Association</CardTitle>
-                  <CardDescription>Add a new Sub-Association (分会)</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={handleCreateAssociation} className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="assoc-id">Association ID</Label>
-                      <Input
-                        id="assoc-id"
-                        placeholder="e.g., selangor_01"
-                        value={newAssociation.id}
-                        onChange={(e) => setNewAssociation({ ...newAssociation, id: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="assoc-name">Association Name</Label>
-                      <Input
-                        id="assoc-name"
-                        placeholder="Selangor Hainan Association"
-                        value={newAssociation.name}
-                        onChange={(e) => setNewAssociation({ ...newAssociation, name: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="assoc-location">Location</Label>
-                      <Input
-                        id="assoc-location"
-                        placeholder="Selangor"
-                        value={newAssociation.location}
-                        onChange={(e) => setNewAssociation({ ...newAssociation, location: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <Button type="submit" className="w-full" disabled={loading}>
-                      {loading ? 'Creating...' : 'Create Association'}
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-
-
-              {/* Existing Associations */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Existing Associations</CardTitle>
-                  <CardDescription>{associations.length} total associations</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3 max-h-96 overflow-y-auto">
-                  {associations.map((assoc) => (
-                    <Card key={assoc.id}>
-                      <CardContent className="p-3 flex items-center gap-3">
-                        <Building2 className="w-5 h-5 text-gray-400" />
-                        <div className="flex-1">
-                          <div className="font-medium">{assoc.name}</div>
-                          <div className="text-sm text-gray-500">{assoc.location}</div>
-                        </div>
-                        <Badge variant="outline">{assoc.id}</Badge>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-
-          {/* Export Data Tab */}
-          <TabsContent value="export">
+          {/* Loan Recipients Tab - manual entry to track repayment (for future notifications) */}
+          <TabsContent value="recipients">
             <Card>
               <CardHeader>
-                <CardTitle>Export Master Data</CardTitle>
-                <CardDescription>
-                  Generate Excel reports per association based on sub admin submissions
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Per Association Export */}
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <FileText className="w-8 h-8 text-blue-600" />
-                    <div>
-                      <h3 className="font-semibold text-lg">Export Association Report</h3>
-                      <p className="text-sm text-gray-600">
-                        Download Excel file for a specific association
-                      </p>
-                    </div>
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <UserPlus className="w-5 h-5" />
+                      Loan Recipients
+                    </CardTitle>
+                    <CardDescription>
+                      Manually add students who received the study loan to track repayment progress. Data is used for notifications later.
+                    </CardDescription>
                   </div>
-
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="association-select">Select Association</Label>
-                      <Select value={selectedAssociationForExport} onValueChange={setSelectedAssociationForExport}>
-                        <SelectTrigger id="association-select" className="w-full">
-                          <SelectValue placeholder="Choose an association to download" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {associations.length === 0 ? (
-                            <SelectItem value="none" disabled>No associations available</SelectItem>
-                          ) : (
-                            associations.map((assoc) => (
-                              <SelectItem key={assoc.id} value={assoc.id}>
-                                {assoc.name || assoc.id} {assoc.location ? `- ${assoc.location}` : ''}
-                              </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-gray-600">
-                        {associations.length} association(s) available for export
-                      </p>
-                    </div>
-
-                    <Button
-                      className="w-full"
-                      onClick={handleDownloadSelected}
-                      disabled={!selectedAssociationForExport || associations.length === 0}
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      Download Selected Association Report
-                    </Button>
-
-                    <div className="bg-white rounded p-3 text-xs text-gray-700">
-                      <p className="font-semibold mb-1">Excel Format:</p>
-                      <ul className="list-disc list-inside space-y-1">
-                        <li>Association Name | Location | Name | Title | Category (optional)</li>
-                        <li>One row per committee member</li>
-                        <li>File name: [Association Name]_Committee_List.xlsx</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-
-
-                {/* Consolidated Report (Optional) */}
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <FileText className="w-8 h-8 text-green-600 mb-2" />
-                  <h3 className="font-semibold mb-1">Consolidated Report</h3>
-                  <p className="text-sm text-gray-600 mb-3">
-                    Generate a consolidated list of all associations
-                  </p>
-                  <Button className="w-full" variant="outline" onClick={() => generateExcelReport()}>
-                    Generate Consolidated Report
+                  <Button onClick={() => setShowAddRecipientPage(true)}>
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Add student
                   </Button>
                 </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {loanRecipients.length === 0 ? (
+                  <div className="text-center py-12 text-gray-500">
+                    <DollarSign className="w-12 h-12 mx-auto mb-3 text-gray-400" />
+                    <p>No loan recipients yet.</p>
+                    <p className="text-sm mt-1">Click &quot;Add student&quot; to enter students who received the study loan.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {loanRecipients.map((r) => {
+                      const remaining = Math.max(0, r.loan_amount - r.total_paid);
+                      const progress = r.loan_amount > 0 ? (r.total_paid / r.loan_amount) * 100 : 0;
+                      return (
+                        <Card key={r.id}>
+                          <CardContent className="p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-4">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="font-semibold text-lg">{r.full_name}</h3>
+                                  <Badge variant={r.status === 'completed' ? 'default' : 'secondary'} className={r.status === 'completed' ? 'bg-green-600' : 'bg-amber-600'}>
+                                    {r.status}
+                                  </Badge>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm text-gray-600 mt-2">
+                                  <span>{r.association}</span>
+                                  <span>{r.university}</span>
+                                  <span>Loan: RM {r.loan_amount.toLocaleString()}</span>
+                                  <span>Paid: RM {r.total_paid.toLocaleString()} ({r.payments_made}/{MONTHLY_PAYMENTS})</span>
+                                </div>
+                                <div className="mt-2 flex items-center gap-4">
+                                  <div className="flex-1 max-w-xs">
+                                    <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                                      <div className="h-full bg-green-600 rounded-full" style={{ width: `${Math.min(100, progress)}%` }} />
+                                    </div>
+                                  </div>
+                                  <span className="text-sm font-medium">Remaining: RM {remaining.toLocaleString()}</span>
+                                </div>
+                              </div>
+                              {r.status === 'active' && remaining > 0 && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => { setSelectedRecipientForPayment(r); setPaymentAmount(String(Math.floor(r.loan_amount / MONTHLY_PAYMENTS))); }}
+                                >
+                                  <DollarSign className="w-4 h-4 mr-1" />
+                                  Record payment
+                                </Button>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Welfare Applications Tab - commented out */}
+          {false && (
+            <TabsContent value="welfare">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <HeartHandshake className="w-5 h-5" />
+                    Welfare Fund Applications
+                  </CardTitle>
+                  <CardDescription>
+                    Review and approve/reject welfare fund applications from members
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex gap-2 border-b pb-4">
+                    <Button variant={welfareFilter === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setWelfareFilter('all')}>All ({welfareApplications.length})</Button>
+                    <Button variant={welfareFilter === 'pending' ? 'default' : 'outline'} size="sm" onClick={() => setWelfareFilter('pending')}>Pending ({welfareApplications.filter(a => a.status === 'pending').length})</Button>
+                    <Button variant={welfareFilter === 'approved' ? 'default' : 'outline'} size="sm" onClick={() => setWelfareFilter('approved')}>Approved ({welfareApplications.filter(a => a.status === 'approved').length})</Button>
+                    <Button variant={welfareFilter === 'rejected' ? 'default' : 'outline'} size="sm" onClick={() => setWelfareFilter('rejected')}>Rejected ({welfareApplications.filter(a => a.status === 'rejected').length})</Button>
+                  </div>
+                  {filteredWelfareApplications.length === 0 ? (
+                    <div className="text-center py-8 text-gray-500">No welfare applications found</div>
+                  ) : (
+                    filteredWelfareApplications.map((application) => (
+                      <Card key={application.id}>
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <h3 className="font-semibold text-lg">{application.applicantNameEnglish || application.applicantNameChinese}</h3>
+                                <Badge variant={application.status === 'approved' ? 'default' : application.status === 'rejected' ? 'destructive' : 'secondary'} className={application.status === 'approved' ? 'bg-green-600' : application.status === 'rejected' ? 'bg-red-600' : 'bg-yellow-600'}>
+                                  {application.status === 'approved' ? 'Approved' : application.status === 'rejected' ? 'Rejected' : 'Pending'}
+                                </Badge>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 mb-3">
+                                <div>IC Number: {application.icNumber}</div>
+                                <div>Age: {application.age}</div>
+                                <div>Gender: {application.gender}</div>
+                                <div>Membership #: {application.membershipNumber || 'N/A'}</div>
+                                <div>Occupation: {application.occupation || 'N/A'}</div>
+                                <div>Monthly Income: RM {application.monthlyIncome || '0'}</div>
+                                <div>Phone: {application.mobilePhone || application.homePhone || 'N/A'}</div>
+                                <div>Request Type: {application.requestType === 'general_welfare' ? 'General Welfare Fund' : 'Sub-Association Donation'}</div>
+                                {application.recommendedBySubAssociation && (
+                                  <div className="col-span-2">
+                                    <Badge variant="outline" className="bg-blue-50"><Building2 className="w-3 h-3 mr-1" />Recommended by: {application.recommendedBySubAssociation}</Badge>
+                                  </div>
+                                )}
+                              </div>
+                              {application.applicationReason && (
+                                <div className="mb-3">
+                                  <p className="text-sm font-semibold mb-1">Application Reason:</p>
+                                  <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded">{application.applicationReason.substring(0, 200)}{application.applicationReason.length > 200 ? '...' : ''}</p>
+                                </div>
+                              )}
+                              <div className="flex gap-2 mb-2">
+                                {application.medicalDocument && (
+                                  <Button size="sm" variant="outline" onClick={() => downloadWelfareDocument(application.medicalDocument!, 'medical_document.pdf')}><FileDown className="w-3 h-3 mr-1" />Medical Doc</Button>
+                                )}
+                                {application.recommendationLetter && (
+                                  <Button size="sm" variant="outline" onClick={() => downloadWelfareDocument(application.recommendationLetter!, 'recommendation_letter.pdf')}><FileDown className="w-3 h-3 mr-1" />Recommendation Letter</Button>
+                                )}
+                              </div>
+                              <Badge variant="outline">Submitted: {new Date(application.submittedAt).toLocaleDateString()}</Badge>
+                              {application.status === 'rejected' && application.rejectionReason && (
+                                <div className="mt-3 bg-red-50 border border-red-200 p-3 rounded">
+                                  <p className="text-sm font-semibold text-red-900 mb-1">Rejection Reason:</p>
+                                  <p className="text-sm text-red-800">{application.rejectionReason}</p>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex flex-col gap-2 ml-4">
+                              <Button size="sm" variant="outline" onClick={() => viewWelfareDetails(application)}><Eye className="w-4 h-4 mr-1" />View Details</Button>
+                              {application.status === 'pending' && (
+                                <>
+                                  <Button size="sm" variant="default" className="bg-green-600 hover:bg-green-700" onClick={() => handleApproveWelfare(application.id)}><CheckCircle className="w-4 h-4 mr-1" />Approve</Button>
+                                  <Button size="sm" variant="destructive" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => openWelfareRejectDialog(application)}><XCircle className="w-4 h-4 mr-1" />Reject</Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+
+          {/* Associations Tab - commented out */}
+          {false && (
+            <TabsContent value="associations">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Create New Association</CardTitle>
+                    <CardDescription>Add a new Sub-Association (分会)</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={handleCreateAssociation} className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="assoc-id">Association ID</Label>
+                        <Input id="assoc-id" placeholder="e.g., selangor_01" value={newAssociation.id} onChange={(e) => setNewAssociation({ ...newAssociation, id: e.target.value })} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="assoc-name">Association Name</Label>
+                        <Input id="assoc-name" placeholder="Selangor Hainan Association" value={newAssociation.name} onChange={(e) => setNewAssociation({ ...newAssociation, name: e.target.value })} required />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="assoc-location">Location</Label>
+                        <Input id="assoc-location" placeholder="Selangor" value={newAssociation.location} onChange={(e) => setNewAssociation({ ...newAssociation, location: e.target.value })} required />
+                      </div>
+                      <Button type="submit" className="w-full" disabled={loading}>{loading ? 'Creating...' : 'Create Association'}</Button>
+                    </form>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Existing Associations</CardTitle>
+                    <CardDescription>{associations.length} total associations</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 max-h-96 overflow-y-auto">
+                    {associations.map((assoc) => (
+                      <Card key={assoc.id}>
+                        <CardContent className="p-3 flex items-center gap-3">
+                          <Building2 className="w-5 h-5 text-gray-400" />
+                          <div className="flex-1">
+                            <div className="font-medium">{assoc.name}</div>
+                            <div className="text-sm text-gray-500">{assoc.location}</div>
+                          </div>
+                          <Badge variant="outline">{assoc.id}</Badge>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          )}
+
+          {/* Export Data Tab - commented out */}
+          {false && (
+            <TabsContent value="export">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Export Master Data</CardTitle>
+                  <CardDescription>Generate Excel reports per association based on sub admin submissions</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                      <FileText className="w-8 h-8 text-blue-600" />
+                      <div>
+                        <h3 className="font-semibold text-lg">Export Association Report</h3>
+                        <p className="text-sm text-gray-600">Download Excel file for a specific association</p>
+                      </div>
+                    </div>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="association-select">Select Association</Label>
+                        <Select value={selectedAssociationForExport} onValueChange={setSelectedAssociationForExport}>
+                          <SelectTrigger id="association-select" className="w-full">
+                            <SelectValue placeholder="Choose an association to download" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {associations.length === 0 ? (
+                              <SelectItem value="none" disabled>No associations available</SelectItem>
+                            ) : (
+                              associations.map((assoc) => (
+                                <SelectItem key={assoc.id} value={assoc.id}>
+                                  {assoc.name || assoc.id} {assoc.location ? `- ${assoc.location}` : ''}
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-gray-600">{associations.length} association(s) available for export</p>
+                      </div>
+                      <Button className="w-full" onClick={handleDownloadSelected} disabled={!selectedAssociationForExport || associations.length === 0}>
+                        <Download className="w-4 h-4 mr-2" />
+                        Download Selected Association Report
+                      </Button>
+                      <div className="bg-white rounded p-3 text-xs text-gray-700">
+                        <p className="font-semibold mb-1">Excel Format:</p>
+                        <ul className="list-disc list-inside space-y-1">
+                          <li>Association Name | Location | Name | Title | Category (optional)</li>
+                          <li>One row per committee member</li>
+                          <li>File name: [Association Name]_Committee_List.xlsx</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <FileText className="w-8 h-8 text-green-600 mb-2" />
+                    <h3 className="font-semibold mb-1">Consolidated Report</h3>
+                    <p className="text-sm text-gray-600 mb-3">Generate a consolidated list of all associations</p>
+                    <Button className="w-full" variant="outline" onClick={() => generateExcelReport()}>Generate Consolidated Report</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
         </Tabs>
       </div>
 
@@ -1176,6 +1593,199 @@ export function SuperAdminDashboard() {
               Reject Application
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Study Loan Application Details Dialog */}
+      <Dialog open={!!selectedStudyLoan && !showRejectStudyLoanDialog} onOpenChange={(open) => !open && setSelectedStudyLoan(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white text-gray-900">
+          {selectedStudyLoan && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="text-gray-900">Study Loan Application Details</DialogTitle>
+                <DialogDescription className="text-gray-600">
+                  Full application for {selectedStudyLoan.full_name}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4 bg-white text-gray-900">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h3 className="font-semibold mb-2 text-gray-900">Applicant</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
+                    <div><strong>Name:</strong> {selectedStudyLoan.full_name}</div>
+                    <div><strong>Age:</strong> {selectedStudyLoan.age}</div>
+                    <div><strong>Phone:</strong> {selectedStudyLoan.phone_number}</div>
+                    <div><strong>Association:</strong> {selectedStudyLoan.association}</div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h3 className="font-semibold mb-2 text-gray-900">Education</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
+                    <div><strong>University:</strong> {selectedStudyLoan.university}</div>
+                    <div><strong>Courses:</strong> {selectedStudyLoan.courses}</div>
+                    <div><strong>Admission:</strong> {selectedStudyLoan.admission_date}</div>
+                    <div><strong>Expected graduation:</strong> {selectedStudyLoan.expected_graduation_date}</div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h3 className="font-semibold mb-2 text-gray-900">Loan</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
+                    <div><strong>Type:</strong> {selectedStudyLoan.loan_type}</div>
+                    <div><strong>Amount:</strong> RM {selectedStudyLoan.loan_amount?.toLocaleString()}</div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h3 className="font-semibold mb-2 text-gray-900">Guarantor</h3>
+                  <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
+                    <div><strong>Relationship:</strong> {selectedStudyLoan.guarantor_relationship}</div>
+                    <div><strong>Phone:</strong> {selectedStudyLoan.guarantor_phone_number}</div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h3 className="font-semibold mb-2 text-gray-900">Uploaded documents</h3>
+                  <p className="text-sm text-gray-600 mb-3">Open the files the applicant uploaded (from Supabase Storage).</p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedStudyLoan.offer_letter_path && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => openStudyLoanDocument(selectedStudyLoan!.offer_letter_path, 'Offer letter')}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> Offer letter
+                      </Button>
+                    )}
+                    {selectedStudyLoan.ic_front_path && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => openStudyLoanDocument(selectedStudyLoan!.ic_front_path, 'IC front')}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> IC front
+                      </Button>
+                    )}
+                    {selectedStudyLoan.ic_back_path && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => openStudyLoanDocument(selectedStudyLoan!.ic_back_path, 'IC back')}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> IC back
+                      </Button>
+                    )}
+                    {selectedStudyLoan.guarantor_ic_front_path && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => openStudyLoanDocument(selectedStudyLoan!.guarantor_ic_front_path, 'Guarantor IC front')}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> Guarantor IC front
+                      </Button>
+                    )}
+                    {selectedStudyLoan.guarantor_ic_back_path && (
+                      <Button type="button" size="sm" variant="outline" onClick={() => openStudyLoanDocument(selectedStudyLoan!.guarantor_ic_back_path, 'Guarantor IC back')}>
+                        <ExternalLink className="w-3 h-3 mr-1" /> Guarantor IC back
+                      </Button>
+                    )}
+                    {!selectedStudyLoan.offer_letter_path && !selectedStudyLoan.ic_front_path && !selectedStudyLoan.ic_back_path && !selectedStudyLoan.guarantor_ic_front_path && !selectedStudyLoan.guarantor_ic_back_path && (
+                      <span className="text-sm text-gray-500">No document paths stored (e.g. application from localStorage).</span>
+                    )}
+                  </div>
+                </div>
+                {selectedStudyLoan.status === 'rejected' && selectedStudyLoan.rejection_reason && (
+                  <div className="bg-red-50 border border-red-200 rounded p-3">
+                    <p className="text-sm font-semibold text-red-900">Rejection reason</p>
+                    <p className="text-sm text-red-800">{selectedStudyLoan.rejection_reason}</p>
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setSelectedStudyLoan(null)}>
+                  Close
+                </Button>
+                {selectedStudyLoan.status === 'pending' && (
+                  <>
+                    <Button
+                      variant="default"
+                      className="bg-green-600 hover:bg-green-700"
+                      onClick={() => handleApproveStudyLoan(selectedStudyLoan.id)}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => openStudyLoanRejectDialog(selectedStudyLoan)}
+                    >
+                      Reject
+                    </Button>
+                  </>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reject Study Loan Dialog */}
+      <Dialog open={showRejectStudyLoanDialog} onOpenChange={setShowRejectStudyLoanDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Study Loan Application</DialogTitle>
+            <DialogDescription>
+              Please provide a reason for rejection. The applicant will see this reason on their status page.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="study-loan-rejection-reason">Rejection Reason *</Label>
+              <Textarea
+                id="study-loan-rejection-reason"
+                placeholder="Enter the reason for rejection..."
+                value={studyLoanRejectionReason}
+                onChange={(e) => setStudyLoanRejectionReason(e.target.value)}
+                rows={4}
+                className="bg-white border-gray-300"
+                required
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowRejectStudyLoanDialog(false);
+              setStudyLoanRejectionReason('');
+              setSelectedStudyLoan(null);
+            }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => {
+              if (!studyLoanRejectionReason.trim()) {
+                alert('Please provide a rejection reason');
+                return;
+              }
+              if (selectedStudyLoan) {
+                handleRejectStudyLoan(selectedStudyLoan.id, studyLoanRejectionReason);
+              }
+            }}>
+              Reject Application
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Record payment for loan recipient */}
+      <Dialog open={!!selectedRecipientForPayment} onOpenChange={(open) => !open && setSelectedRecipientForPayment(null)}>
+        <DialogContent className="bg-white text-gray-900">
+          {selectedRecipientForPayment && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Record payment</DialogTitle>
+                <DialogDescription>
+                  {selectedRecipientForPayment.full_name} · Remaining: RM {(selectedRecipientForPayment.loan_amount - selectedRecipientForPayment.total_paid).toLocaleString()}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="payment-amount">Amount (RM)</Label>
+                  <Input
+                    id="payment-amount"
+                    type="number"
+                    min="1"
+                    value={paymentAmount}
+                    onChange={(e) => setPaymentAmount(e.target.value)}
+                    placeholder={String(Math.floor(selectedRecipientForPayment.loan_amount / MONTHLY_PAYMENTS))}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setSelectedRecipientForPayment(null); setPaymentAmount(''); }}>Cancel</Button>
+                <Button onClick={() => { handleRecordPayment(); }} disabled={!paymentAmount || parseInt(paymentAmount, 10) <= 0}>
+                  Record payment
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

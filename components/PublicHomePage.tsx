@@ -16,6 +16,7 @@ import { ImageWithFallback } from './backupImg/ImageWithFallback';
 import { MyPassPage } from './MyPassPage';
 import { DonatePage } from './DonatePage';
 import { LoansPage } from './LoansPage';
+import { StudyLoanStatusPage } from './StudyLoanStatusPage';
 import { WelfarePage } from './WelfarePage';
 import { EventBookingPage } from './EventBookingPage';
 import { NotificationPanel } from './NotificationPanel';
@@ -45,7 +46,7 @@ interface Event {
 
 export function PublicHomePage() {
   const { user, signOut } = useAuth();
-  const [currentPage, setCurrentPage] = useState<'home' | 'mypass' | 'donate' | 'loans' | 'welfare' | 'booking'>('home');
+  const [currentPage, setCurrentPage] = useState<'home' | 'mypass' | 'donate' | 'loans' | 'loans-status' | 'welfare' | 'booking'>('home');
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [api, setApi] = useState<any>(null);
 
@@ -123,7 +124,16 @@ export function PublicHomePage() {
 
 
   if (currentPage === 'loans') {
-    return <LoansPage onBack={() => setCurrentPage('home')} />;
+    return (
+      <LoansPage
+        onBack={() => setCurrentPage('home')}
+        onApplied={() => setCurrentPage('loans-status')}
+      />
+    );
+  }
+
+  if (currentPage === 'loans-status') {
+    return <StudyLoanStatusPage onBack={() => setCurrentPage('home')} />;
   }
 
   if (currentPage === 'welfare') {

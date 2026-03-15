@@ -1,0 +1,420 @@
+import { useState } from 'react';
+import { Button } from '../ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Input } from '../ui/input';
+import { Label } from '../ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { ArrowLeft, Camera, FileText, Loader2 } from 'lucide-react';
+import type { LoanRecipient } from '../types/studyLoan';
+import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
+import { extractTextFromImage, isGeminiConfigured } from '../lib/gemini';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
+const HAINAN_ASSOCIATIONS = [
+  'Selangor Hainan Association', 'Kuala Lumpur Hainan Association', 'Penang Hainan Association',
+  'Johor Hainan Association', 'Melaka Hainan Association', 'Negeri Sembilan Hainan Association',
+  'Perak Hainan Association', 'Kedah Hainan Association', 'Perlis Hainan Association',
+  'Kelantan Hainan Association', 'Terengganu Hainan Association', 'Pahang Hainan Association',
+  'Sabah Hainan Association', 'Sarawak Hainan Association',
+];
+
+const LOAN_TYPES = [
+  { value: 'degree', label: 'Degree (学士)', amount: 4000 },
+  { value: 'tvet', label: 'TVET (技职教育)', amount: 4000 },
+  { value: 'master_phd', label: 'Master/PhD (硕士/博士)', amount: 5000 },
+];
+
+const GUARANTOR_RELATIONSHIPS = [
+  { value: 'dad', label: 'Dad (父亲)' },
+  { value: 'mom', label: 'Mom (母亲)' },
+  { value: 'uncle', label: 'Uncle (叔叔/舅舅)' },
+  { value: 'aunty', label: 'Aunty (阿姨/姑姑)' },
+  { value: 'brother', label: 'Brother (兄弟)' },
+  { value: 'sister', label: 'Sister (姐妹)' },
+  { value: 'other', label: 'Other (其他)' },
+];
+
+interface AddLoanRecipientPageProps {
+  onBack: () => void;
+  onSubmit: (recipient: LoanRecipient) => Promise<void>;
+}
+
+const initialForm = {
+  association: '',
+  full_name: '',
+  age: '',
+  email: '',
+  phone_number: '',
+  university: '',
+  courses: '',
+  admission_date: '',
+  expected_graduation_date: '',
+  loan_type: '',
+  loan_amount: '',
+  ic_front_text: '',
+  ic_back_text: '',
+  guarantor_relationship: '',
+  guarantor_phone_number: '',
+  guarantor_ic_text: '',
+  notes: '',
+};
+
+export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageProps) {
+  const [step, setStep] = useState(1);
+  const [form, setForm] = useState(initialForm);
+  const [submitting, setSubmitting] = useState(false);
+  const [aiLoading, setAiLoading] = useState<string | null>(null);
+  // Offer letter: file only
+  const [offerLetterFile, setOfferLetterFile] = useState<File | null>(null);
+  // Optional IC files (can be saved to storage)
+  const [icFrontFile, setIcFrontFile] = useState<File | null>(null);
+  const [icBackFile, setIcBackFile] = useState<File | null>(null);
+  const [guarantorIcFrontFile, setGuarantorIcFrontFile] = useState<File | null>(null);
+  const [guarantorIcBackFile, setGuarantorIcBackFile] = useState<File | null>(null);
+  // AI-extracted text preview (read-only; admin copies from here)
+  const [icFrontPreview, setIcFrontPreview] = useState('');
+  const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
+  const [guarantorIcBackPreview, setGuarantorIcBackPreview] = useState('');
+
+  const update = (key: string, value: string) => setForm(f => ({ ...f, [key]: value }));
+
+  const loanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? form.loan_amount) : (form.loan_amount ? parseInt(form.loan_amount, 10) : 0);
+
+  /** Photo+AI: pick file → extract text (preview) and optionally save file for upload (so no need to upload again). */
+  const handleAiExtract = async (
+    setPreview: (t: string) => void,
+    prompt: string,
+    setFile?: (f: File | null) => void
+  ) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*,.pdf';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+      if (setFile) setFile(file);
+      setAiLoading('extract');
+      try {
+        const text = await extractTextFromImage(file, prompt);
+        setPreview(text);
+      } catch (err: any) {
+        alert(err?.message || 'AI extraction failed');
+      } finally {
+        setAiLoading(null);
+      }
+    };
+    input.click();
+  };
+
+  const handleSubmit = async () => {
+    const amount = form.loan_amount ? parseInt(form.loan_amount, 10) : loanAmount;
+    if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.guarantor_relationship || !form.guarantor_phone_number.trim() || !form.loan_type || !amount || amount <= 0) {
+      alert('Please fill all required fields (association, name, email, phone, university, courses, guarantor, loan type/amount).');
+      return;
+    }
+    if (!guarantorIcFrontFile || !guarantorIcBackFile) {
+      alert('Guarantor IC front and back are required. Please upload both files.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      let offer_letter_path: string | null = null;
+      let ic_front_path: string | null = null;
+      let ic_back_path: string | null = null;
+      let guarantor_ic_front_path: string | null = null;
+      let guarantor_ic_back_path: string | null = null;
+
+      if (isSupabaseConfigured() && supabase) {
+        const prefix = `recipients/${id}`;
+        const upload = async (file: File | null, pathKey: string): Promise<string | null> => {
+          if (!file) return null;
+          const ext = file.name.split('.').pop() || 'bin';
+          const path = `${prefix}/${pathKey}.${ext}`;
+          const { error } = await supabase.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
+          if (error) throw new Error(`Upload failed: ${pathKey}`);
+          return path;
+        };
+        offer_letter_path = await upload(offerLetterFile, 'offer_letter');
+        ic_front_path = await upload(icFrontFile, 'ic_front');
+        ic_back_path = await upload(icBackFile, 'ic_back');
+        guarantor_ic_front_path = await upload(guarantorIcFrontFile, 'guarantor_ic_front');
+        guarantor_ic_back_path = await upload(guarantorIcBackFile, 'guarantor_ic_back');
+      }
+
+      const recipient: LoanRecipient = {
+        id,
+        full_name: form.full_name.trim(),
+        email: form.email.trim(),
+        phone_number: form.phone_number.trim(),
+        association: form.association,
+        university: form.university.trim(),
+        courses: form.courses.trim(),
+        admission_date: form.admission_date || '',
+        expected_graduation_date: form.expected_graduation_date || '',
+        loan_type: form.loan_type,
+        loan_amount: amount,
+        total_paid: 0,
+        payments_made: 0,
+        status: 'active',
+        guarantor_relationship: form.guarantor_relationship,
+        guarantor_phone_number: form.guarantor_phone_number.trim(),
+        offer_letter_path: offer_letter_path || null,
+        ic_front_path: ic_front_path || null,
+        ic_back_path: ic_back_path || null,
+        guarantor_ic_front_path: guarantor_ic_front_path || null,
+        guarantor_ic_back_path: guarantor_ic_back_path || null,
+        ic_front_text: form.ic_front_text.trim() || null,
+        ic_back_text: form.ic_back_text.trim() || null,
+        guarantor_ic_text: form.guarantor_ic_text.trim() || null,
+        notes: form.notes.trim() || null,
+        created_at: now,
+        updated_at: now,
+      };
+      await onSubmit(recipient);
+      onBack();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to add student');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b sticky top-0 z-10">
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+          <Button variant="ghost" onClick={onBack}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back
+          </Button>
+          <span className="font-medium text-gray-700">Add student · Step {step} of 3</span>
+        </div>
+      </div>
+
+      <div className="max-w-3xl mx-auto px-4 py-8">
+        <div className="flex items-center justify-between mb-8">
+          {[1, 2, 3].map((s) => (
+            <div key={s} className="flex items-center flex-1">
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium ${step >= s ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                {s}
+              </div>
+              {s < 3 && <div className={`flex-1 h-1 mx-2 ${step > s ? 'bg-blue-600' : 'bg-gray-200'}`} />}
+            </div>
+          ))}
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              {step === 1 && 'Student & loan info'}
+              {step === 2 && 'Documents'}
+              {step === 3 && 'Guarantor & submit'}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {step === 1 && (
+              <>
+                <div className="space-y-2">
+                  <Label>Association *</Label>
+                  <Select value={form.association} onValueChange={(v) => update('association', v)}>
+                    <SelectTrigger><SelectValue placeholder="Select association" /></SelectTrigger>
+                    <SelectContent>
+                      {HAINAN_ASSOCIATIONS.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Full name *</Label>
+                    <Input value={form.full_name} onChange={(e) => update('full_name', e.target.value)} placeholder="Student full name" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Age</Label>
+                    <Input type="number" value={form.age} onChange={(e) => update('age', e.target.value)} placeholder="Age" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Email *</Label>
+                    <Input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} placeholder="email@example.com" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Phone *</Label>
+                    <Input value={form.phone_number} onChange={(e) => update('phone_number', e.target.value)} placeholder="012-345-6789" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>University *</Label>
+                  <Input value={form.university} onChange={(e) => update('university', e.target.value)} placeholder="University name" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Courses *</Label>
+                  <Input value={form.courses} onChange={(e) => update('courses', e.target.value)} placeholder="Course name" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Admission date</Label>
+                    <Input type="date" value={form.admission_date} onChange={(e) => update('admission_date', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Expected graduation date</Label>
+                    <Input type="date" value={form.expected_graduation_date} onChange={(e) => update('expected_graduation_date', e.target.value)} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Loan type *</Label>
+                  <Select value={form.loan_type} onValueChange={(v) => { update('loan_type', v); const a = LOAN_TYPES.find(t => t.value === v)?.amount; if (a) update('loan_amount', String(a)); }}>
+                    <SelectTrigger><SelectValue placeholder="Select loan type" /></SelectTrigger>
+                    <SelectContent>
+                      {LOAN_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label} – RM {t.amount.toLocaleString()}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Loan amount (RM) *</Label>
+                  <Input type="number" min="1" value={form.loan_amount} onChange={(e) => update('loan_amount', e.target.value)} placeholder="e.g. 4000" />
+                </div>
+              </>
+            )}
+
+            {step === 2 && (
+              <>
+                {/* Offer letter: file browse only */}
+                <div className="space-y-2">
+                  <Label>Offer letter</Label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      onChange={(e) => setOfferLetterFile(e.target.files?.[0] || null)}
+                      className="hidden"
+                      id="offerLetter"
+                    />
+                    <label htmlFor="offerLetter" className="cursor-pointer flex flex-col items-center gap-2">
+                      <FileText className="w-8 h-8 text-gray-400" />
+                      <span className="text-sm text-gray-600">
+                        {offerLetterFile ? offerLetterFile.name : 'Browse file (PDF or image)'}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Student IC front: upload or Photo+AI (file is saved automatically when using Photo+AI) */}
+                <div className="space-y-2">
+                  <Label>Student IC (front)</Label>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                      <input type="file" accept="image/*" className="hidden" id="icFrontFile" onChange={(e) => setIcFrontFile(e.target.files?.[0] || null)} />
+                      <label htmlFor="icFrontFile" className="cursor-pointer text-sm text-gray-600">{icFrontFile ? icFrontFile.name : 'Upload (optional)'}</label>
+                    </div>
+                    {isGeminiConfigured() && (
+                      <Button type="button" variant="outline" size="sm" disabled={!!aiLoading} onClick={() => handleAiExtract(setIcFrontPreview, 'This is a Malaysian IC (front). Extract all visible text: name, IC number, address. Return only the extracted text.', setIcFrontFile)}>
+                        {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Camera className="w-4 h-4 mr-1" /> Photo + AI</>}
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500">Using Photo + AI saves the file automatically; no need to upload again.</p>
+                  {icFrontPreview && (
+                    <div className="rounded border bg-gray-50 p-3">
+                      <p className="text-xs font-medium text-gray-500 mb-1">Extracted text (copy what you need):</p>
+                      <pre className="text-sm whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{icFrontPreview}</pre>
+                    </div>
+                  )}
+                  <Input placeholder="Paste key details (e.g. IC number)" value={form.ic_front_text} onChange={(e) => update('ic_front_text', e.target.value)} />
+                </div>
+
+                {/* Student IC back: file upload only (no Photo+AI) */}
+                <div className="space-y-2">
+                  <Label>Student IC (back)</Label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                    <input type="file" accept="image/*" className="hidden" id="icBackFile" onChange={(e) => setIcBackFile(e.target.files?.[0] || null)} />
+                    <label htmlFor="icBackFile" className="cursor-pointer text-sm text-gray-600">{icBackFile ? icBackFile.name : 'Upload (optional)'}</label>
+                  </div>
+                </div>
+              </>
+            )}
+
+            {step === 3 && (
+              <>
+                <div className="space-y-2">
+                  <Label>Guarantor relationship *</Label>
+                  <Select value={form.guarantor_relationship} onValueChange={(v) => update('guarantor_relationship', v)}>
+                    <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                    <SelectContent>
+                      {GUARANTOR_RELATIONSHIPS.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Guarantor phone *</Label>
+                  <Input value={form.guarantor_phone_number} onChange={(e) => update('guarantor_phone_number', e.target.value)} placeholder="012-345-6789" />
+                </div>
+                {/* Guarantor IC: required front and back; Photo+AI saves file automatically */}
+                <div className="space-y-2">
+                  <Label>Guarantor IC (front) *</Label>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                      <input type="file" accept="image/*" className="hidden" id="guarantorIcFront" onChange={(e) => setGuarantorIcFrontFile(e.target.files?.[0] || null)} />
+                      <label htmlFor="guarantorIcFront" className="cursor-pointer text-sm text-gray-600">{guarantorIcFrontFile ? guarantorIcFrontFile.name : 'Upload or use Photo + AI'}</label>
+                    </div>
+                    {isGeminiConfigured() && (
+                      <Button type="button" variant="outline" size="sm" disabled={!!aiLoading} onClick={() => handleAiExtract(setGuarantorIcFrontPreview, 'Extract all text from this image (e.g. IC). Return only the extracted text.', setGuarantorIcFrontFile)}>
+                        {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Camera className="w-4 h-4 mr-1" /> Photo + AI</>}
+                      </Button>
+                    )}
+                  </div>
+                  {guarantorIcFrontPreview && (
+                    <div className="rounded border bg-gray-50 p-3">
+                      <p className="text-xs font-medium text-gray-500 mb-1">Extracted text (copy what you need):</p>
+                      <pre className="text-sm whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{guarantorIcFrontPreview}</pre>
+                    </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Guarantor IC (back) *</Label>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                      <input type="file" accept="image/*" className="hidden" id="guarantorIcBack" onChange={(e) => setGuarantorIcBackFile(e.target.files?.[0] || null)} />
+                      <label htmlFor="guarantorIcBack" className="cursor-pointer text-sm text-gray-600">{guarantorIcBackFile ? guarantorIcBackFile.name : 'Upload or use Photo + AI'}</label>
+                    </div>
+                    {isGeminiConfigured() && (
+                      <Button type="button" variant="outline" size="sm" disabled={!!aiLoading} onClick={() => handleAiExtract(setGuarantorIcBackPreview, 'Extract all text from this image (e.g. IC). Return only the extracted text.', setGuarantorIcBackFile)}>
+                        {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Camera className="w-4 h-4 mr-1" /> Photo + AI</>}
+                      </Button>
+                    )}
+                  </div>
+                  {guarantorIcBackPreview && (
+                    <div className="rounded border bg-gray-50 p-3">
+                      <p className="text-xs font-medium text-gray-500 mb-1">Extracted text (copy what you need):</p>
+                      <pre className="text-sm whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{guarantorIcBackPreview}</pre>
+                    </div>
+                  )}
+                  <Input placeholder="Paste key details (e.g. guarantor IC number)" value={form.guarantor_ic_text} onChange={(e) => update('guarantor_ic_text', e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Notes (optional)</Label>
+                  <Input value={form.notes} onChange={(e) => update('notes', e.target.value)} placeholder="Any notes" />
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-between pt-4">
+              <Button variant="outline" onClick={() => step > 1 ? setStep(step - 1) : onBack()} disabled={submitting}>
+                {step === 1 ? 'Cancel' : 'Back'}
+              </Button>
+              {step < 3 ? (
+                <Button onClick={() => setStep(step + 1)}>Next</Button>
+              ) : (
+                <Button onClick={handleSubmit} disabled={submitting}>
+                  {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Saving...</> : 'Add student'}
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

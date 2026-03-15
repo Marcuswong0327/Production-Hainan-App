@@ -199,8 +199,8 @@ export function AuthPage() {
                     </SelectTrigger>
                     <SelectContent className="z-50">
                       <SelectItem value="public">Public User (会员)</SelectItem>
-                      <SelectItem value="sub_editor">Sub-Editor (分会编辑)</SelectItem>
-                      <SelectItem value="sub_admin">Sub-Admin (分会管理员)</SelectItem>
+                      {/* <SelectItem value="sub_editor">Sub-Editor (分会编辑)</SelectItem> */}
+                      {/* <SelectItem value="sub_admin">Sub-Admin (分会管理员)</SelectItem> */}
                       <SelectItem value="super_admin">Super Admin (总会)</SelectItem>
                     </SelectContent>
                   </Select>

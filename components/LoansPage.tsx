@@ -4,20 +4,21 @@ import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Progress } from '../ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { ArrowLeft, CreditCard, DollarSign, Calendar, CheckCircle2, Camera, FileText, AlertTriangle } from 'lucide-react';
-import { Badge } from '../ui/badge';
+import { ArrowLeft, CreditCard, DollarSign, CheckCircle2, Camera, FileText, Loader2 } from 'lucide-react';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 //import { checkPaymentDeadlines, isPaymentOverdue } from '../DeadlineSimulator';
 
-export function LoansPage({ onBack }: { onBack: () => void }) {
+export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied?: () => void }) {
   const { user } = useAuth();
-  const [hasLoan, setHasLoan] = useState(false);
-  const [loan, setLoan] = useState<any>(null);
+  const [hasExistingApplication, setHasExistingApplication] = useState(false);
   const [showIntroduction, setShowIntroduction] = useState(true);
   const [showConsent, setShowConsent] = useState(false);
   const [showApplyForm, setShowApplyForm] = useState(false);
   const [applicationStep, setApplicationStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Application form state
   const [formData, setFormData] = useState({
@@ -39,18 +40,25 @@ export function LoansPage({ onBack }: { onBack: () => void }) {
     loanType: '',
   });
 
-  // useEffect(() => {
-  //   // Check payment deadlines on load
-  //   checkPaymentDeadlines();
-
-  //   // Load user's loan from localStorage
-  //   const loans = JSON.parse(localStorage.getItem('myHainanLoans') || '[]');
-  //   const userLoan = loans.find((l: any) => l.userId === user?.id);
-  //   if (userLoan) {
-  //     setHasLoan(true);
-  //     setLoan(userLoan);
-  //   }
-  // }, [user]);
+  // Check for existing study loan application (Supabase or localStorage)
+  useEffect(() => {
+    if (!user?.id) return;
+    const check = async () => {
+      if (isSupabaseConfigured() && supabase) {
+        const { data } = await supabase
+          .from('study_loan_applications')
+          .select('id')
+          .eq('user_id', user.id)
+          .order('applied_at', { ascending: false })
+          .limit(1);
+        setHasExistingApplication((data?.length ?? 0) > 0);
+      } else {
+        const applications = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+        setHasExistingApplication(applications.some((a: any) => a.userId === user?.id));
+      }
+    };
+    check();
+  }, [user?.id]);
 
   const getLoanAmount = (loanType: string) => {
     switch (loanType) {
@@ -73,51 +81,85 @@ export function LoansPage({ onBack }: { onBack: () => void }) {
     setFormData({ ...formData, [field]: value });
   };
 
-  const handleSubmitApplication = () => {
-    // Store application locally
-    const applications = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+  const handleSubmitApplication = async () => {
+    if (!user?.id) return;
+    setSubmitting(true);
+    setSubmitError(null);
     const loanAmount = getLoanAmount(formData.loanType);
-    const newApplication = {
-      id: Date.now().toString(),
-      userId: user?.id,
-      ...formData,
-      offerLetterName: formData.offerLetter?.name || '',
-      icFrontName: formData.icFront?.name || '',
-      icBackName: formData.icBack?.name || '',
-      guarantorIcFrontName: formData.guarantorIcFront?.name || '',
-      guarantorIcBackName: formData.guarantorIcBack?.name || '',
-      loanAmount,
-      appliedDate: new Date().toISOString(),
-      status: 'pending',
-    };
-    applications.push(newApplication);
-    localStorage.setItem('myHainanLoanApplications', JSON.stringify(applications));
 
-    // Also create a loan record for demo
-    const loans = JSON.parse(localStorage.getItem('myHainanLoans') || '[]');
-    const monthlyPayment = Math.floor(loanAmount / 20);
-    const newLoan = {
-      id: Date.now().toString(),
-      userId: user?.id,
-      amount: loanAmount,
-      loanType: formData.loanType,
-      appliedDate: new Date().toISOString(),
-      status: 'approved',
-      monthlyPayment,
-      totalPaid: 0,
-      remainingBalance: loanAmount,
-      paymentsMade: 0,
-      totalPayments: 20,
-      nextPaymentDate: getNextMonthDate(),
-    };
-    loans.push(newLoan);
-    localStorage.setItem('myHainanLoans', JSON.stringify(loans));
-    setLoan(newLoan);
-    setHasLoan(true);
-    setShowApplyForm(false);
-    setShowIntroduction(false);
-    setShowConsent(false);
-    setApplicationStep(1);
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const client = supabase;
+        const id = crypto.randomUUID();
+        const prefix = `${id}`;
+
+        const upload = async (file: File | null, pathKey: string): Promise<string | null> => {
+          if (!file) return null;
+          const ext = file.name.split('.').pop() || 'bin';
+          const path = `${prefix}/${pathKey}.${ext}`;
+          const { error } = await client.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
+          if (error) throw new Error(`Upload failed: ${pathKey}`);
+          return path;
+        };
+
+        const offerLetterPath = await upload(formData.offerLetter, 'offer_letter');
+        const icFrontPath = await upload(formData.icFront, 'ic_front');
+        const icBackPath = await upload(formData.icBack, 'ic_back');
+        const guarantorIcFrontPath = await upload(formData.guarantorIcFront, 'guarantor_ic_front');
+        const guarantorIcBackPath = await upload(formData.guarantorIcBack, 'guarantor_ic_back');
+
+        const { error } = await client.from('study_loan_applications').insert({
+          id,
+          user_id: user.id,
+          association: formData.association,
+          full_name: formData.fullName,
+          age: formData.age,
+          university: formData.university,
+          courses: formData.courses,
+          admission_date: formData.admissionDate,
+          expected_graduation_date: formData.expectedGraduationDate,
+          phone_number: formData.phoneNumber,
+          offer_letter_path: offerLetterPath,
+          ic_front_path: icFrontPath,
+          ic_back_path: icBackPath,
+          guarantor_ic_front_path: guarantorIcFrontPath,
+          guarantor_ic_back_path: guarantorIcBackPath,
+          guarantor_relationship: formData.guarantorRelationship,
+          guarantor_phone_number: formData.guarantorPhoneNumber,
+          loan_type: formData.loanType,
+          loan_amount: loanAmount,
+          status: 'pending',
+        });
+        if (error) throw error;
+      } else {
+        const applications = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+        applications.push({
+          id: Date.now().toString(),
+          userId: user.id,
+          ...formData,
+          offerLetterName: formData.offerLetter?.name || '',
+          icFrontName: formData.icFront?.name || '',
+          icBackName: formData.icBack?.name || '',
+          guarantorIcFrontName: formData.guarantorIcFront?.name || '',
+          guarantorIcBackName: formData.guarantorIcBack?.name || '',
+          loanAmount,
+          appliedDate: new Date().toISOString(),
+          status: 'pending',
+        });
+        localStorage.setItem('myHainanLoanApplications', JSON.stringify(applications));
+      }
+
+      setHasExistingApplication(true);
+      setShowApplyForm(false);
+      setShowIntroduction(false);
+      setShowConsent(false);
+      setApplicationStep(1);
+      onApplied?.();
+    } catch (e: any) {
+      setSubmitError(e?.message || 'Failed to submit application. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const isStepValid = (step: number) => {
@@ -140,49 +182,6 @@ export function LoansPage({ onBack }: { onBack: () => void }) {
         return false;
     }
   };
-
-  const getNextMonthDate = () => {
-    const next = new Date();
-    next.setMonth(next.getMonth() + 1);
-    next.setDate(1); // Set to 1st of next month (deadline is 8th)
-    next.setHours(0, 0, 0, 0);
-    return next.toISOString();
-  };
-
-  const handlePayment = (amount: number) => {
-    const loans = JSON.parse(localStorage.getItem('myHainanLoans') || '[]');
-    const loanIndex = loans.findIndex((l: any) => l.id === loan.id);
-
-    const newTotalPaid = loan.totalPaid + amount;
-    const newRemainingBalance = loan.amount - newTotalPaid;
-    const newPaymentsMade = loan.paymentsMade + 1;
-
-    // Award points for payment
-    const pointsEarned = Math.floor(amount / 10);
-    if (user) {
-      const updatedUser = { ...user, points: (user.points || 0) + pointsEarned };
-      localStorage.setItem('myHainanUser', JSON.stringify(updatedUser));
-    }
-
-    // Update next payment date to next month's 1st (deadline is 8th)
-    const updatedLoan = {
-      ...loan,
-      totalPaid: newTotalPaid,
-      remainingBalance: newRemainingBalance,
-      paymentsMade: newPaymentsMade,
-      status: newRemainingBalance <= 0 ? 'completed' : 'approved',
-      nextPaymentDate: newRemainingBalance > 0 ? getNextMonthDate() : null,
-    };
-
-    loans[loanIndex] = updatedLoan;
-    localStorage.setItem('myHainanLoans', JSON.stringify(loans));
-    setLoan(updatedLoan);
-
-    // Recheck deadlines after payment
-    //checkPaymentDeadlines();
-  };
-
-  const progressPercentage = loan ? (loan.totalPaid / loan.amount) * 100 : 0;
 
   // Hainan associations list
   const hainanAssociations = [
@@ -216,8 +215,28 @@ export function LoansPage({ onBack }: { onBack: () => void }) {
           Back to Home
         </Button>
 
-        {/* Introduction Page */}
-        {showIntroduction && !hasLoan && !showApplyForm && !showConsent ? (
+        {/* View application status (when user already has an application) */}
+        {showIntroduction && !showApplyForm && !showConsent && hasExistingApplication && onApplied ? (
+          <Card className="shadow-xl">
+            <CardHeader className="border-b bg-gradient-to-r from-blue-500 to-blue-600 text-white">
+              <div className="flex items-center gap-3">
+                <CreditCard className="w-8 h-8" />
+                <div>
+                  <CardTitle className="text-2xl">Study Loan Application</CardTitle>
+                  <p className="text-sm text-blue-100 mt-1">Check your application status</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <p className="text-gray-700 mb-4">
+                You have already submitted a study loan application. Super admin will review it. You can check the status and any updates on the status page.
+              </p>
+              <Button onClick={onApplied} className="w-full" size="lg">
+                View application status
+              </Button>
+            </CardContent>
+          </Card>
+        ) : showIntroduction && !showApplyForm && !showConsent ? (
           <Card className="shadow-xl">
             <CardHeader className="border-b bg-gradient-to-r from-blue-500 to-blue-600 text-white">
               <div className="flex items-center gap-3">
@@ -245,15 +264,15 @@ export function LoansPage({ onBack }: { onBack: () => void }) {
                     <ul className="space-y-2 text-sm text-gray-700">
                       <li className="flex items-start gap-2">
                         <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
-                        <span><strong>Degree Programs:</strong> Up to RM 5,000</span>
+                        <span><strong>Degree Programs:</strong> Up to RM 4,000</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
-                        <span><strong>TVET Programs:</strong> Up to RM 3,000</span>
+                        <span><strong>TVET Programs:</strong> Up to RM 4,000</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
-                        <span><strong>Master/PhD Programs:</strong> Up to RM 8,000</span>
+                        <span><strong>Master/PhD Programs:</strong> Up to RM 5,000</span>
                       </li>
                     </ul>
                   </div>
@@ -660,122 +679,24 @@ export function LoansPage({ onBack }: { onBack: () => void }) {
                       </div>
                     </div>
                   )}
+                  {submitError && (
+                    <div className="bg-red-50 border border-red-200 text-red-800 text-sm p-3 rounded-lg">
+                      {submitError}
+                    </div>
+                  )}
                   <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => setApplicationStep(4)} className="flex-1">
+                    <Button variant="outline" onClick={() => setApplicationStep(4)} className="flex-1" disabled={submitting}>
                       Back
                     </Button>
-                    <Button onClick={handleSubmitApplication} disabled={!isStepValid(5)} className="flex-1">
-                      Submit Application
+                    <Button onClick={handleSubmitApplication} disabled={!isStepValid(5) || submitting} className="flex-1">
+                      {submitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Submitting...</> : 'Submit Application'}
                     </Button>
                   </div>
                 </div>
               )}
             </CardContent>
           </Card>
-        ) : (
-          <div className="space-y-4">
-            {/* Loan Overview Card */}
-            <Card className="shadow-xl">
-              <CardHeader className="border-b bg-gradient-to-r from-green-500 to-green-600 text-white">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-2xl">Active Loan</CardTitle>
-                    <p className="text-sm text-green-100 mt-1">{loan.loanType ? loanTypes.find(t => t.value === loan.loanType)?.label : 'Study Loan'}</p>
-                  </div>
-                  <Badge className={`${loan.status === 'completed' ? 'bg-white/20 text-white' : 'bg-white/90 text-green-600'
-                    }`}>
-                    {loan.status === 'completed' ? 'Completed' : 'Active'}
-                  </Badge>
-                </div>
-              </CardHeader>
-
-              <CardContent className="pt-6 space-y-6">
-                {/* Balance Overview */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="text-center p-4 bg-gray-50 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Total Loan</p>
-                    <p className="text-2xl font-bold text-gray-900">RM{loan.amount.toFixed(2)}</p>
-                  </div>
-                  <div className="text-center p-4 bg-green-50 rounded-lg">
-                    <p className="text-sm text-gray-600 mb-1">Remaining</p>
-                    <p className="text-2xl font-bold text-green-600">
-                      RM{loan.remainingBalance.toFixed(2)}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Progress Bar */}
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Repayment Progress</span>
-                    <span className="font-medium">{progressPercentage.toFixed(0)}%</span>
-                  </div>
-                  <Progress value={progressPercentage} className="h-3" />
-                  <div className="flex justify-between text-xs text-gray-500">
-                    <span>RM{loan.totalPaid.toFixed(2)} paid</span>
-                    <span>{loan.paymentsMade}/{loan.totalPayments} payments</span>
-                  </div>
-                </div>
-
-                {/* Payment Info */}
-                <div className="bg-blue-50 p-4 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Calendar className="w-5 h-5 text-blue-600" />
-                    <h4 className="font-semibold">Monthly Payment</h4>
-                  </div>
-                  <p className="text-3xl font-bold text-blue-600">
-                    RM{loan.monthlyPayment.toFixed(2)}
-                  </p>
-                  <p className="text-sm text-gray-600 mt-1">Due by the 8th of each month</p>
-                  {/* {loan.nextPaymentDate && isPaymentOverdue(loan.nextPaymentDate) && (
-                    <div className="mt-3 bg-red-50 border border-red-200 p-3 rounded-lg">
-                      <div className="flex items-center gap-2 text-red-700">
-                        <AlertTriangle className="w-4 h-4" />
-                        <span className="text-sm font-semibold">Payment Overdue</span>
-                      </div>
-                      <p className="text-xs text-red-600 mt-1">
-                        Your payment is past the deadline. Please make payment immediately.
-                      </p>
-                    </div>
-                  )} */}
-                </div>
-
-                {/* Payment Actions */}
-                {loan.status !== 'completed' && (
-                  <div className="space-y-2">
-                    <Button
-                      onClick={() => handlePayment(loan.monthlyPayment)}
-                      className="w-full"
-                      size="lg"
-                    >
-                      Make Monthly Payment (RM{loan.monthlyPayment.toFixed(2)})
-                    </Button>
-                    <Button
-                      onClick={() => handlePayment(loan.remainingBalance)}
-                      variant="outline"
-                      className="w-full"
-                    >
-                      Pay Full Balance (RM{loan.remainingBalance.toFixed(2)})
-                    </Button>
-                    <p className="text-xs text-center text-gray-500">
-                      Earn {Math.floor(loan.monthlyPayment / 10)} points per payment! 🎯
-                    </p>
-                  </div>
-                )}
-
-                {loan.status === 'completed' && (
-                  <div className="bg-green-50 border border-green-200 p-4 rounded-lg text-center">
-                    <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-2" />
-                    <h4 className="font-semibold text-green-900">Loan Completed!</h4>
-                    <p className="text-sm text-green-700 mt-1">
-                      Congratulations on completing your loan repayment!
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        )}
+        ) : null}
       </div>
     </div>
   );

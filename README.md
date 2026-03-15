@@ -13,7 +13,23 @@ A Progressive Web App (PWA) for the Hainan Association community, built with Rea
 - **Role Switcher**: Switch between multiple roles with verification
 - **Gamification**: Points and badges system
 - **Donations**: Donation tracking with badges
-- **Loans**: Loan management system
+- **Loans**: Study loan applications with Supabase backend; status page for applicants; super admin review
+
+### Auth and study loan backend (Supabase)
+
+When Supabase is configured, **sign in and sign up** use Supabase Auth and a **profiles** table for roles. Study loan applications are tied to the logged-in user’s Supabase id.
+
+- **Super admin:** Sign up once with email `marcuswong0327@gmail.com` and password `SHIquan@!05`; the app assigns the super admin role. Change password from the dashboard (header → “Change password”).
+- **Public users:** Sign up as “Public User”; their loan applications are linked to their Supabase user id.
+
+To enable:
+
+1. Copy `.env.example` to `.env` and add your Supabase project URL and anon key.
+2. Follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) (create project, **profiles** and study_loan_applications tables, storage bucket, policies).
+
+Without Supabase, the app uses localStorage for auth and loan applications so you can still test the flow.
+
+**Optional – AI document extraction (OpenRouter):** In Super Admin → Loan Recipients → Add student, admins can type document details manually or use “Photo + AI” to extract text from photos (e.g. IC, offer letter). Add `VITE_OPENROUTER_API_KEY` to `.env` (get a key from [OpenRouter](https://openrouter.ai/keys)). Model: `google/gemini-3-flash-preview`. If not set, only manual entry is available.
 
 ## Project Structure
 
