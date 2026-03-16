@@ -55,6 +55,7 @@ export function StudyLoanStatusPage({ onBack }: { onBack: () => void }) {
             association: mine.association,
             full_name: mine.fullName,
             age: mine.age,
+            email: mine.email || user.email || '',
             university: mine.university,
             courses: mine.courses,
             admission_date: mine.admissionDate,

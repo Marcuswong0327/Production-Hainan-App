@@ -28,6 +28,7 @@ import {
   CarouselNext,
   CarouselPrevious,
 } from '../ui/carousel';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 
 interface Event {
@@ -253,13 +254,43 @@ export function PublicHomePage() {
               <Card
                 key={idx}
                 className="cursor-pointer hover:shadow-lg transition-shadow"
-                onClick={() => {
+                onClick={async () => {
                   if (action.label === 'My Pass') {
                     setCurrentPage('mypass');
                   } else if (action.label === 'Donate') {
                     setCurrentPage('donate');
                   } else if (action.label === 'Loans') {
-                    setCurrentPage('loans');
+                    // If user already has an approved loan, jump straight to repayment/status page
+                    if (user?.id) {
+                      try {
+                        let hasApproved = false;
+                        if (isSupabaseConfigured() && supabase) {
+                          const { data } = await supabase
+                            .from('study_loan_applications')
+                            .select('status')
+                            .eq('user_id', user.id)
+                            .order('applied_at', { ascending: false })
+                            .limit(1)
+                            .maybeSingle();
+                          if (data && data.status === 'approved') {
+                            hasApproved = true;
+                          }
+                        } else {
+                          const applications = JSON.parse(localStorage.getItem('myHainanLoanApplications') || '[]');
+                          const mine = applications
+                            .filter((a: any) => a.userId === user.id)
+                            .sort((a: any, b: any) => (b.appliedDate || '').localeCompare(a.appliedDate || ''));
+                          if (mine[0]?.status === 'approved') {
+                            hasApproved = true;
+                          }
+                        }
+                        setCurrentPage(hasApproved ? 'loans-status' : 'loans');
+                      } catch {
+                        setCurrentPage('loans');
+                      }
+                    } else {
+                      setCurrentPage('loans');
+                    }
                   } else if (action.label === 'Welfare') {
                     setCurrentPage('welfare');
                   }

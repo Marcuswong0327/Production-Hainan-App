@@ -9,12 +9,13 @@ import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
-import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown, CreditCard, ExternalLink, UserPlus, DollarSign } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown, CreditCard, ExternalLink, UserPlus, DollarSign, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { StudyLoanApplication, LoanRecipient } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET, MONTHLY_PAYMENTS } from '../types/studyLoan';
 import { AddLoanRecipientPage } from './AddLoanRecipientPage';
+import { RecordLoanPaymentsPage } from './RecordLoanPaymentsPage';
 
 
 interface Event {
@@ -88,11 +89,12 @@ export function SuperAdminDashboard() {
   const [showRejectStudyLoanDialog, setShowRejectStudyLoanDialog] = useState(false);
   const [studyLoanRejectionReason, setStudyLoanRejectionReason] = useState('');
 
+  const [activeTab, setActiveTab] = useState<'studyLoans' | 'recipients'>('studyLoans');
+
   // Manual loan recipients (track students who got the loan)
   const [loanRecipients, setLoanRecipients] = useState<LoanRecipient[]>([]);
   const [showAddRecipientPage, setShowAddRecipientPage] = useState(false);
-  const [selectedRecipientForPayment, setSelectedRecipientForPayment] = useState<LoanRecipient | null>(null);
-  const [paymentAmount, setPaymentAmount] = useState('');
+  const [recordPaymentsRecipient, setRecordPaymentsRecipient] = useState<LoanRecipient | null>(null);
   const [selectedRecipientForDetails, setSelectedRecipientForDetails] = useState<LoanRecipient | null>(null);
   const [editRecipient, setEditRecipient] = useState<LoanRecipient | null>(null);
   const [showNotificationDialog, setShowNotificationDialog] = useState(false);
@@ -101,6 +103,7 @@ export function SuperAdminDashboard() {
     'Your study loan repayment is due soon. Please check your loan status in the app.'
   );
   const [notificationSchedule, setNotificationSchedule] = useState('');
+  const [showLoanStats, setShowLoanStats] = useState(false);
 
   // New Association Form
   const [newAssociation, setNewAssociation] = useState({
@@ -228,6 +231,40 @@ export function SuperAdminDashboard() {
           .update({ status: 'approved', reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq('id', applicationId);
         if (!error) {
+          // When approved, sync into loan recipients list so repayment can be tracked
+          if (app) {
+            const now = new Date().toISOString();
+            const recipient: LoanRecipient = {
+              id: app.id,
+              full_name: app.full_name,
+              email: app.email,
+              phone_number: app.phone_number,
+              association: app.association,
+              university: app.university,
+              courses: app.courses,
+              admission_date: app.admission_date,
+              expected_graduation_date: app.expected_graduation_date,
+              loan_type: app.loan_type,
+              loan_amount: app.loan_amount,
+              total_paid: app.total_paid ?? 0,
+              payments_made: app.payments_made ?? 0,
+              status: 'active',
+              guarantor_relationship: app.guarantor_relationship,
+              guarantor_phone_number: app.guarantor_phone_number,
+              offer_letter_path: app.offer_letter_path,
+              ic_front_path: app.ic_front_path,
+              ic_back_path: app.ic_back_path,
+              guarantor_ic_front_path: app.guarantor_ic_front_path,
+              guarantor_ic_back_path: app.guarantor_ic_back_path,
+              ic_front_text: null,
+              ic_back_text: null,
+              guarantor_ic_text: null,
+              notes: null,
+              created_at: now,
+              updated_at: now,
+            };
+            await saveLoanRecipient(recipient);
+          }
           if (userId) notifyStudyLoanApplicant(userId, true);
           fetchStudyLoanApplications();
           setSelectedStudyLoan(null);
@@ -238,6 +275,40 @@ export function SuperAdminDashboard() {
         const idx = all.findIndex((a: any) => a.id === applicationId);
         if (idx !== -1) {
           all[idx].status = 'approved';
+          // Sync into loan recipients (local-only)
+          if (app) {
+            const now = new Date().toISOString();
+            const recipient: LoanRecipient = {
+              id: app.id,
+              full_name: app.full_name,
+              email: (app as any).email || '',
+              phone_number: app.phone_number,
+              association: app.association,
+              university: app.university,
+              courses: app.courses,
+              admission_date: app.admission_date,
+              expected_graduation_date: app.expected_graduation_date,
+              loan_type: app.loan_type,
+              loan_amount: app.loan_amount,
+              total_paid: app.total_paid ?? 0,
+              payments_made: app.payments_made ?? 0,
+              status: 'active',
+              guarantor_relationship: app.guarantor_relationship,
+              guarantor_phone_number: app.guarantor_phone_number,
+              offer_letter_path: null,
+              ic_front_path: null,
+              ic_back_path: null,
+              guarantor_ic_front_path: null,
+              guarantor_ic_back_path: null,
+              ic_front_text: null,
+              ic_back_text: null,
+              guarantor_ic_text: null,
+              notes: null,
+              created_at: now,
+              updated_at: now,
+            };
+            await saveLoanRecipient(recipient);
+          }
           if (userId) notifyStudyLoanApplicant(userId, true);
           localStorage.setItem('myHainanLoanApplications', JSON.stringify(all));
           fetchStudyLoanApplications();
@@ -375,6 +446,27 @@ export function SuperAdminDashboard() {
     setLoanRecipients(prev => [newRecipient, ...prev]);
   };
 
+  const deleteLoanRecipient = async (id: string) => {
+    if (!window.confirm('Delete this loan recipient? This cannot be undone.')) return;
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { error } = await supabase.from('study_loan_recipients').delete().eq('id', id);
+        if (error) throw error;
+      } else {
+        const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
+        const filtered = list.filter((r: LoanRecipient) => r.id !== id);
+        localStorage.setItem('myHainanLoanRecipients', JSON.stringify(filtered));
+      }
+      setLoanRecipients(prev => prev.filter(r => r.id !== id));
+      if (selectedRecipientForDetails && selectedRecipientForDetails.id === id) {
+        setSelectedRecipientForDetails(null);
+        setEditRecipient(null);
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete recipient.');
+    }
+  };
+
   const updateLoanRecipient = async (updated: LoanRecipient) => {
     try {
       if (isSupabaseConfigured() && supabase) {
@@ -424,9 +516,14 @@ export function SuperAdminDashboard() {
 
   const handleRecordPayment = async () => {
     if (!selectedRecipientForPayment) return;
+    const month = parseInt(paymentMonth, 10);
     const amount = parseInt(paymentAmount, 10);
     if (isNaN(amount) || amount <= 0) {
       alert('Enter a valid payment amount.');
+      return;
+    }
+    if (isNaN(month) || month < 1 || month > MONTHLY_PAYMENTS) {
+      alert(`Please choose a valid month (1-${MONTHLY_PAYMENTS}).`);
       return;
     }
     const newTotalPaid = selectedRecipientForPayment.total_paid + amount;
@@ -434,6 +531,14 @@ export function SuperAdminDashboard() {
     const newStatus = newTotalPaid >= selectedRecipientForPayment.loan_amount ? 'completed' : 'active';
     try {
       if (isSupabaseConfigured() && supabase) {
+        let receiptPath: string | null = null;
+        if (paymentReceiptFile) {
+          const ext = paymentReceiptFile.name.split('.').pop() || 'bin';
+          const path = `recipients/${selectedRecipientForPayment.id}/payments/${Date.now()}.${ext}`;
+          const { error: uploadError } = await supabase.storage.from(STUDY_LOAN_BUCKET).upload(path, paymentReceiptFile, { upsert: true });
+          if (uploadError) throw uploadError;
+          receiptPath = path;
+        }
         const { error } = await supabase.from('study_loan_recipients').update({
           total_paid: newTotalPaid,
           payments_made: newPaymentsMade,
@@ -441,6 +546,13 @@ export function SuperAdminDashboard() {
           updated_at: new Date().toISOString(),
         }).eq('id', selectedRecipientForPayment.id);
         if (error) throw error;
+        const { error: payError } = await supabase.from('study_loan_payments').insert({
+          recipient_id: selectedRecipientForPayment.id,
+          amount,
+          payment_month: month,
+          receipt_path: receiptPath,
+        });
+        if (payError) throw payError;
       } else {
         const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
         const idx = list.findIndex((r: LoanRecipient) => r.id === selectedRecipientForPayment.id);
@@ -448,10 +560,22 @@ export function SuperAdminDashboard() {
           list[idx] = { ...list[idx], total_paid: newTotalPaid, payments_made: newPaymentsMade, status: newStatus, updated_at: new Date().toISOString() };
           localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
         }
+        const payments = JSON.parse(localStorage.getItem('myHainanLoanPayments') || '[]');
+        payments.push({
+          id: Date.now().toString(),
+          recipientId: selectedRecipientForPayment.id,
+          amount,
+          paymentMonth: month,
+          paidAt: new Date().toISOString(),
+          receiptName: paymentReceiptFile?.name || '',
+        });
+        localStorage.setItem('myHainanLoanPayments', JSON.stringify(payments));
       }
       setLoanRecipients(prev => prev.map(r => r.id === selectedRecipientForPayment.id ? { ...r, total_paid: newTotalPaid, payments_made: newPaymentsMade, status: newStatus, updated_at: new Date().toISOString() } : r));
       setSelectedRecipientForPayment(null);
       setPaymentAmount('');
+      setPaymentMonth('');
+      setPaymentReceiptFile(null);
     } catch (err: any) {
       alert(err?.message || 'Failed to record payment.');
     }
@@ -770,8 +894,27 @@ export function SuperAdminDashboard() {
   if (showAddRecipientPage) {
     return (
       <AddLoanRecipientPage
-        onBack={() => setShowAddRecipientPage(false)}
+        onBack={() => {
+          setShowAddRecipientPage(false);
+          setActiveTab('recipients');
+        }}
         onSubmit={saveLoanRecipient}
+      />
+    );
+  }
+
+  if (recordPaymentsRecipient) {
+    return (
+      <RecordLoanPaymentsPage
+        recipient={recordPaymentsRecipient}
+        onBack={() => {
+          setRecordPaymentsRecipient(null);
+          setActiveTab('recipients');
+          fetchLoanRecipients();
+        }}
+        onTotalsUpdated={(updated) => {
+          setLoanRecipients((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        }}
       />
     );
   }
@@ -795,7 +938,7 @@ export function SuperAdminDashboard() {
 
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <Tabs defaultValue="studyLoans" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'studyLoans' | 'recipients')} className="space-y-6">
           <TabsList className="grid w-full grid-cols-2 max-w-xl">
             {/* <TabsTrigger value="events">Event Approval</TabsTrigger> */}
             <TabsTrigger value="studyLoans">Study Loan Applications</TabsTrigger>
@@ -1025,10 +1168,13 @@ export function SuperAdminDashboard() {
                     </CardDescription>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => setShowNotificationDialog(true)}>
+                    <Button variant="outline" onClick={() => { setActiveTab('recipients'); setShowLoanStats(true); }}>
+                      Overall stats
+                    </Button>
+                    <Button variant="outline" onClick={() => { setActiveTab('recipients'); setShowNotificationDialog(true); }}>
                       Send notifications
                     </Button>
-                    <Button onClick={() => setShowAddRecipientPage(true)}>
+                    <Button onClick={() => { setActiveTab('recipients'); setShowAddRecipientPage(true); }}>
                       <UserPlus className="w-4 h-4 mr-2" />
                       Add student
                     </Button>
@@ -1102,6 +1248,20 @@ export function SuperAdminDashboard() {
                                     Record payment
                                   </Button>
                                 )}
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-700 border-red-200 hover:bg-red-50"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    deleteLoanRecipient(r.id);
+                                  }}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-1" />
+                                  Delete
+                                </Button>
                               </div>
                             </div>
                           </CardContent>
@@ -1768,6 +1928,24 @@ export function SuperAdminDashboard() {
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
+                  <Label htmlFor="payment-month">Month in schedule</Label>
+                  <Select
+                    value={paymentMonth}
+                    onValueChange={(v) => setPaymentMonth(v)}
+                  >
+                    <SelectTrigger id="payment-month">
+                      <SelectValue placeholder="Select month (1 - 20)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Array.from({ length: MONTHLY_PAYMENTS }, (_, idx) => idx + 1).map((m) => (
+                        <SelectItem key={m} value={String(m)}>
+                          Month {m}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label htmlFor="payment-amount">Amount (RM)</Label>
                   <Input
                     id="payment-amount"
@@ -1778,10 +1956,25 @@ export function SuperAdminDashboard() {
                     placeholder={String(Math.floor(selectedRecipientForPayment.loan_amount / MONTHLY_PAYMENTS))}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="payment-receipt">Receipt / proof (optional)</Label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                    <input
+                      id="payment-receipt"
+                      type="file"
+                      accept="image/*,.pdf"
+                      className="hidden"
+                      onChange={(e) => setPaymentReceiptFile(e.target.files?.[0] || null)}
+                    />
+                    <label htmlFor="payment-receipt" className="cursor-pointer text-sm text-gray-600">
+                      {paymentReceiptFile ? paymentReceiptFile.name : 'Upload receipt / evidence (optional)'}
+                    </label>
+                  </div>
+                </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => { setSelectedRecipientForPayment(null); setPaymentAmount(''); }}>Cancel</Button>
-                <Button onClick={() => { handleRecordPayment(); }} disabled={!paymentAmount || parseInt(paymentAmount, 10) <= 0}>
+                <Button variant="outline" onClick={() => { setSelectedRecipientForPayment(null); setPaymentAmount(''); setPaymentMonth(''); setPaymentReceiptFile(null); }}>Cancel</Button>
+                <Button onClick={() => { handleRecordPayment(); }} disabled={!paymentAmount || parseInt(paymentAmount, 10) <= 0 || !paymentMonth}>
                   Record payment
                 </Button>
               </DialogFooter>
@@ -2043,6 +2236,63 @@ export function SuperAdminDashboard() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Loan stats dialog */}
+      <Dialog open={showLoanStats} onOpenChange={(open) => { setShowLoanStats(open); if (open) setActiveTab('recipients'); }}>
+        <DialogContent className="bg-white text-gray-900">
+          <DialogHeader>
+            <DialogTitle>Loan portfolio overview</DialogTitle>
+            <DialogDescription>
+              Summary of total loaned out and collected across all recipients.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {loanRecipients.length === 0 ? (
+              <p className="text-sm text-gray-500">No recipients yet.</p>
+            ) : (
+              (() => {
+                const totalLoaned = loanRecipients.reduce((sum, r) => sum + r.loan_amount, 0);
+                const totalCollected = loanRecipients.reduce((sum, r) => sum + r.total_paid, 0);
+                const outstanding = Math.max(0, totalLoaned - totalCollected);
+                const collectedPct = totalLoaned > 0 ? (totalCollected / totalLoaned) * 100 : 0;
+                return (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                      <div className="border rounded-lg p-3 bg-blue-50">
+                        <p className="text-xs text-gray-500">Total loaned out</p>
+                        <p className="text-lg font-semibold text-blue-700">RM {totalLoaned.toLocaleString()}</p>
+                      </div>
+                      <div className="border rounded-lg p-3 bg-green-50">
+                        <p className="text-xs text-gray-500">Total collected</p>
+                        <p className="text-lg font-semibold text-green-700">RM {totalCollected.toLocaleString()}</p>
+                      </div>
+                      <div className="border rounded-lg p-3 bg-amber-50">
+                        <p className="text-xs text-gray-500">Outstanding</p>
+                        <p className="text-lg font-semibold text-amber-700">RM {outstanding.toLocaleString()}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs text-gray-600">
+                        <span>Collected vs loaned</span>
+                        <span>{Math.round(collectedPct)}%</span>
+                      </div>
+                      <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-green-600 rounded-full"
+                          style={{ width: `${Math.min(100, collectedPct)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLoanStats(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

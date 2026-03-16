@@ -6,6 +6,7 @@ export interface StudyLoanApplication {
   association: string;
   full_name: string;
   age: string;
+  email: string;
   university: string;
   courses: string;
   admission_date: string;

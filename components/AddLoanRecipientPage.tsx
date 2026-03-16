@@ -4,10 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { ArrowLeft, Camera, FileText, Loader2 } from 'lucide-react';
+import { ArrowLeft, FileText, Loader2 } from 'lucide-react';
 import type { LoanRecipient } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
-import { extractTextFromImage, isGeminiConfigured } from '../lib/gemini';
+// import { extractTextFromImage, isGeminiConfigured } from '../lib/gemini';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 const HAINAN_ASSOCIATIONS = [
@@ -51,11 +51,8 @@ const initialForm = {
   expected_graduation_date: '',
   loan_type: '',
   loan_amount: '',
-  ic_front_text: '',
-  ic_back_text: '',
   guarantor_relationship: '',
   guarantor_phone_number: '',
-  guarantor_ic_text: '',
   notes: '',
 };
 
@@ -63,7 +60,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialForm);
   const [submitting, setSubmitting] = useState(false);
-  const [aiLoading, setAiLoading] = useState<string | null>(null);
+  // const [aiLoading, setAiLoading] = useState<string | null>(null);
   // Offer letter: file only
   const [offerLetterFile, setOfferLetterFile] = useState<File | null>(null);
   // Optional IC files (can be saved to storage)
@@ -72,44 +69,82 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   const [guarantorIcFrontFile, setGuarantorIcFrontFile] = useState<File | null>(null);
   const [guarantorIcBackFile, setGuarantorIcBackFile] = useState<File | null>(null);
   // AI-extracted text preview (read-only; admin copies from here)
-  const [icFrontPreview, setIcFrontPreview] = useState('');
-  const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
-  const [guarantorIcBackPreview, setGuarantorIcBackPreview] = useState('');
+  // const [icFrontPreview, setIcFrontPreview] = useState('');
+  // const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
 
   const update = (key: string, value: string) => setForm(f => ({ ...f, [key]: value }));
 
   const loanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? form.loan_amount) : (form.loan_amount ? parseInt(form.loan_amount, 10) : 0);
+  // /** Photo+AI: pick file → extract text (preview) and optionally save file for upload (so no need to upload again). */
+  // const handleAiExtract = async (
+  //   setPreview: (t: string) => void,
+  //   prompt: string,
+  //   setFile?: (f: File | null) => void
+  // ) => {
+  //   const input = document.createElement('input');
+  //   input.type = 'file';
+  //   input.accept = 'image/*,.pdf';
+  //   input.onchange = async (e) => {
+  //     const file = (e.target as HTMLInputElement).files?.[0];
+  //     if (!file) return;
+  //     if (setFile) setFile(file);
+  //     setAiLoading('extract');
+  //     try {
+  //       const text = await extractTextFromImage(file, prompt);
+  //       setPreview(text);
+  //     } catch (err: any) {
+  //       alert(err?.message || 'AI extraction failed');
+  //     } finally {
+  //       setAiLoading(null);
+  //     }
+  //   };
+  //   input.click();
+  // };
 
-  /** Photo+AI: pick file → extract text (preview) and optionally save file for upload (so no need to upload again). */
-  const handleAiExtract = async (
-    setPreview: (t: string) => void,
-    prompt: string,
-    setFile?: (f: File | null) => void
-  ) => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*,.pdf';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      if (setFile) setFile(file);
-      setAiLoading('extract');
-      try {
-        const text = await extractTextFromImage(file, prompt);
-        setPreview(text);
-      } catch (err: any) {
-        alert(err?.message || 'AI extraction failed');
-      } finally {
-        setAiLoading(null);
-      }
-    };
-    input.click();
+  const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+
+  const isValidPhone = (value: string) => {
+    const raw = value.replace(/[\s-]/g, '');
+    if (!raw) return false;
+    if (!/^\+?60?\d{9,11}$/.test(raw)) return false;
+    if (/^(\d)\1{5,}$/.test(raw.replace(/^\+?60/, ''))) return false;
+    return true;
+  };
+
+  const areDatesValid = (admission: string, graduation: string) => {
+    if (!admission || !graduation) return false;
+    const start = new Date(admission);
+    const end = new Date(graduation);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+    if (start >= end) return false;
+    const diffMs = end.getTime() - start.getTime();
+    const yearMs = 365 * 24 * 60 * 60 * 1000;
+    if (diffMs < yearMs) return false;
+    if (diffMs > 8 * yearMs) return false;
+    return true;
   };
 
   const handleSubmit = async () => {
     const amount = form.loan_amount ? parseInt(form.loan_amount, 10) : loanAmount;
+    const ageNum = form.age ? parseInt(form.age, 10) : NaN;
     if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.guarantor_relationship || !form.guarantor_phone_number.trim() || !form.loan_type || !amount || amount <= 0) {
       alert('Please fill all required fields (association, name, email, phone, university, courses, guarantor, loan type/amount).');
+      return;
+    }
+    if (form.age && (Number.isNaN(ageNum) || ageNum < 17 || ageNum > 65)) {
+      alert('Please enter a valid age between 17 and 65.');
+      return;
+    }
+    if (!isValidEmail(form.email)) {
+      alert('Please enter a valid email address.');
+      return;
+    }
+    if (!isValidPhone(form.phone_number) || !isValidPhone(form.guarantor_phone_number)) {
+      alert('Please enter valid phone numbers (student and guarantor).');
+      return;
+    }
+    if (form.admission_date && form.expected_graduation_date && !areDatesValid(form.admission_date, form.expected_graduation_date)) {
+      alert('Admission date must be before graduation date, with course length between 1 and 8 years.');
       return;
     }
     if (!guarantorIcFrontFile || !guarantorIcBackFile) {
@@ -165,9 +200,9 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
         ic_back_path: ic_back_path || null,
         guarantor_ic_front_path: guarantor_ic_front_path || null,
         guarantor_ic_back_path: guarantor_ic_back_path || null,
-        ic_front_text: form.ic_front_text.trim() || null,
-        ic_back_text: form.ic_back_text.trim() || null,
-        guarantor_ic_text: form.guarantor_ic_text.trim() || null,
+        ic_front_text: null,
+        ic_back_text: null,
+        guarantor_ic_text: null,
         notes: form.notes.trim() || null,
         created_at: now,
         updated_at: now,
@@ -301,36 +336,31 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                   </div>
                 </div>
 
-                {/* Student IC front: upload or Photo+AI (file is saved automatically when using Photo+AI) */}
+                {/* Student IC front: upload documents (no AI) */}
                 <div className="space-y-2">
                   <Label>Student IC (front)</Label>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                      <input type="file" accept="image/*" className="hidden" id="icFrontFile" onChange={(e) => setIcFrontFile(e.target.files?.[0] || null)} />
-                      <label htmlFor="icFrontFile" className="cursor-pointer text-sm text-gray-600">{icFrontFile ? icFrontFile.name : 'Upload (optional)'}</label>
-                    </div>
-                    {isGeminiConfigured() && (
-                      <Button type="button" variant="outline" size="sm" disabled={!!aiLoading} onClick={() => handleAiExtract(setIcFrontPreview, 'This is a Malaysian IC (front). Extract all visible text: name, IC number, address. Return only the extracted text.', setIcFrontFile)}>
-                        {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Camera className="w-4 h-4 mr-1" /> Photo + AI</>}
-                      </Button>
-                    )}
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      id="icFrontFile"
+                      onChange={(e) => setIcFrontFile(e.target.files?.[0] || null)}
+                    />
+                    <label htmlFor="icFrontFile" className="cursor-pointer text-sm text-gray-600">
+                      {icFrontFile ? icFrontFile.name : 'Upload documents'}
+                    </label>
                   </div>
-                  <p className="text-xs text-gray-500">Using Photo + AI saves the file automatically; no need to upload again.</p>
-                  {icFrontPreview && (
-                    <div className="rounded border bg-gray-50 p-3">
-                      <p className="text-xs font-medium text-gray-500 mb-1">Extracted text (copy what you need):</p>
-                      <pre className="text-sm whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{icFrontPreview}</pre>
-                    </div>
-                  )}
-                  <Input placeholder="Paste key details (e.g. IC number)" value={form.ic_front_text} onChange={(e) => update('ic_front_text', e.target.value)} />
                 </div>
 
-                {/* Student IC back: file upload only (no Photo+AI) */}
+                {/* Student IC back: upload documents only */}
                 <div className="space-y-2">
                   <Label>Student IC (back)</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
                     <input type="file" accept="image/*" className="hidden" id="icBackFile" onChange={(e) => setIcBackFile(e.target.files?.[0] || null)} />
-                    <label htmlFor="icBackFile" className="cursor-pointer text-sm text-gray-600">{icBackFile ? icBackFile.name : 'Upload (optional)'}</label>
+                    <label htmlFor="icBackFile" className="cursor-pointer text-sm text-gray-600">
+                      {icBackFile ? icBackFile.name : 'Upload documents'}
+                    </label>
                   </div>
                 </div>
               </>
@@ -351,47 +381,36 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                   <Label>Guarantor phone *</Label>
                   <Input value={form.guarantor_phone_number} onChange={(e) => update('guarantor_phone_number', e.target.value)} placeholder="012-345-6789" />
                 </div>
-                {/* Guarantor IC: required front and back; Photo+AI saves file automatically */}
+                {/* Guarantor IC: required front and back; upload documents only */}
                 <div className="space-y-2">
                   <Label>Guarantor IC (front) *</Label>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                      <input type="file" accept="image/*" className="hidden" id="guarantorIcFront" onChange={(e) => setGuarantorIcFrontFile(e.target.files?.[0] || null)} />
-                      <label htmlFor="guarantorIcFront" className="cursor-pointer text-sm text-gray-600">{guarantorIcFrontFile ? guarantorIcFrontFile.name : 'Upload or use Photo + AI'}</label>
-                    </div>
-                    {isGeminiConfigured() && (
-                      <Button type="button" variant="outline" size="sm" disabled={!!aiLoading} onClick={() => handleAiExtract(setGuarantorIcFrontPreview, 'Extract all text from this image (e.g. IC). Return only the extracted text.', setGuarantorIcFrontFile)}>
-                        {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Camera className="w-4 h-4 mr-1" /> Photo + AI</>}
-                      </Button>
-                    )}
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      id="guarantorIcFront"
+                      onChange={(e) => setGuarantorIcFrontFile(e.target.files?.[0] || null)}
+                    />
+                    <label htmlFor="guarantorIcFront" className="cursor-pointer text-sm text-gray-600">
+                      {guarantorIcFrontFile ? guarantorIcFrontFile.name : 'Upload documents'}
+                    </label>
                   </div>
-                  {guarantorIcFrontPreview && (
-                    <div className="rounded border bg-gray-50 p-3">
-                      <p className="text-xs font-medium text-gray-500 mb-1">Extracted text (copy what you need):</p>
-                      <pre className="text-sm whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{guarantorIcFrontPreview}</pre>
-                    </div>
-                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Guarantor IC (back) *</Label>
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                      <input type="file" accept="image/*" className="hidden" id="guarantorIcBack" onChange={(e) => setGuarantorIcBackFile(e.target.files?.[0] || null)} />
-                      <label htmlFor="guarantorIcBack" className="cursor-pointer text-sm text-gray-600">{guarantorIcBackFile ? guarantorIcBackFile.name : 'Upload or use Photo + AI'}</label>
-                    </div>
-                    {isGeminiConfigured() && (
-                      <Button type="button" variant="outline" size="sm" disabled={!!aiLoading} onClick={() => handleAiExtract(setGuarantorIcBackPreview, 'Extract all text from this image (e.g. IC). Return only the extracted text.', setGuarantorIcBackFile)}>
-                        {aiLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Camera className="w-4 h-4 mr-1" /> Photo + AI</>}
-                      </Button>
-                    )}
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      id="guarantorIcBack"
+                      onChange={(e) => setGuarantorIcBackFile(e.target.files?.[0] || null)}
+                    />
+                    <label htmlFor="guarantorIcBack" className="cursor-pointer text-sm text-gray-600">
+                      {guarantorIcBackFile ? guarantorIcBackFile.name : 'Upload documents'}
+                    </label>
                   </div>
-                  {guarantorIcBackPreview && (
-                    <div className="rounded border bg-gray-50 p-3">
-                      <p className="text-xs font-medium text-gray-500 mb-1">Extracted text (copy what you need):</p>
-                      <pre className="text-sm whitespace-pre-wrap break-words max-h-24 overflow-y-auto">{guarantorIcBackPreview}</pre>
-                    </div>
-                  )}
-                  <Input placeholder="Paste key details (e.g. guarantor IC number)" value={form.guarantor_ic_text} onChange={(e) => update('guarantor_ic_text', e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Notes (optional)</Label>

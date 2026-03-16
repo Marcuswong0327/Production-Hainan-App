@@ -19,12 +19,14 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
   const [applicationStep, setApplicationStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   // Application form state
   const [formData, setFormData] = useState({
     association: '',
     fullName: '',
     age: '',
+    email: '',
     university: '',
     courses: '',
     admissionDate: '',
@@ -81,10 +83,57 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
     setFormData({ ...formData, [field]: value });
   };
 
+  const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+
+  const isValidPhone = (value: string) => {
+    const raw = value.replace(/[\s-]/g, '');
+    if (!raw) return false;
+    if (!/^\+?60?\d{9,11}$/.test(raw)) return false;
+    if (/^(\d)\1{5,}$/.test(raw.replace(/^\+?60/, ''))) return false;
+    return true;
+  };
+
+  const areDatesValid = (admission: string, graduation: string) => {
+    if (!admission || !graduation) return false;
+    const start = new Date(admission);
+    const end = new Date(graduation);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+    if (start >= end) return false;
+    const diffMs = end.getTime() - start.getTime();
+    const yearMs = 365 * 24 * 60 * 60 * 1000;
+    if (diffMs < yearMs) return false;
+    if (diffMs > 8 * yearMs) return false;
+    return true;
+  };
+
   const handleSubmitApplication = async () => {
     if (!user?.id) return;
     setSubmitting(true);
     setSubmitError(null);
+    setValidationError(null);
+
+    const ageNum = parseInt(formData.age, 10);
+    if (Number.isNaN(ageNum) || ageNum < 17 || ageNum > 65) {
+      setValidationError('Please enter a valid age between 17 and 65.');
+      setSubmitting(false);
+      return;
+    }
+    if (!isValidEmail(formData.email)) {
+      setValidationError('Please enter a valid email address.');
+      setSubmitting(false);
+      return;
+    }
+    if (!isValidPhone(formData.phoneNumber)) {
+      setValidationError('Please enter a valid phone number (e.g. 012-3456789 or +60...).');
+      setSubmitting(false);
+      return;
+    }
+    if (!areDatesValid(formData.admissionDate, formData.expectedGraduationDate)) {
+      setValidationError('Admission date must be before graduation date, with course length between 1 and 8 years.');
+      setSubmitting(false);
+      return;
+    }
+
     const loanAmount = getLoanAmount(formData.loanType);
 
     try {
@@ -114,6 +163,7 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
           association: formData.association,
           full_name: formData.fullName,
           age: formData.age,
+          email: formData.email,
           university: formData.university,
           courses: formData.courses,
           admission_date: formData.admissionDate,
@@ -167,10 +217,16 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
       case 1:
         return formData.association !== '';
       case 2:
-        return formData.fullName !== '' && formData.age !== '' && formData.university !== '' &&
-          formData.courses !== '' && formData.admissionDate !== '' &&
-          formData.expectedGraduationDate !== '' && formData.phoneNumber !== '' &&
-          formData.offerLetter !== null;
+        return (
+          formData.fullName.trim() !== '' &&
+          formData.age.trim() !== '' &&
+          isValidEmail(formData.email) &&
+          formData.university.trim() !== '' &&
+          formData.courses.trim() !== '' &&
+          areDatesValid(formData.admissionDate, formData.expectedGraduationDate) &&
+          isValidPhone(formData.phoneNumber) &&
+          formData.offerLetter !== null
+        );
       case 3:
         return formData.icFront !== null && formData.icBack !== null;
       case 4:
@@ -393,7 +449,7 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
               {applicationStep === 2 && (
                 <div className="space-y-4">
                   <h3 className="font-semibold text-lg">2. Personal Information</h3>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Full Name *</Label>
                       <Input
@@ -411,7 +467,19 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
                         placeholder="Enter your age"
                       />
                     </div>
+                    <div className="space-y-2">
+                      <Label>Email *</Label>
+                      <Input
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => handleInputChange('email', e.target.value)}
+                        placeholder="email@example.com"
+                      />
+                    </div>
                   </div>
+                  {validationError && (
+                    <p className="text-xs text-red-600">{validationError}</p>
+                  )}
                   <div className="space-y-2">
                     <Label>University *</Label>
                     <Input

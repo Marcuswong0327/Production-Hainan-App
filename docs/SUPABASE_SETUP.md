@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS study_loan_applications (
   association TEXT NOT NULL,
   full_name TEXT NOT NULL,
   age TEXT NOT NULL,
+  email TEXT NOT NULL,
   university TEXT NOT NULL,
   courses TEXT NOT NULL,
   admission_date TEXT NOT NULL,
@@ -173,6 +174,19 @@ ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_ic_back_pat
 ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS ic_front_text TEXT;
 ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS ic_back_text TEXT;
 ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_ic_text TEXT;
+
+-- Optional: store individual repayment records with receipts
+CREATE TABLE IF NOT EXISTS study_loan_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  recipient_id UUID NOT NULL REFERENCES study_loan_recipients(id) ON DELETE CASCADE,
+  amount INTEGER NOT NULL,
+  paid_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  payment_month INTEGER,
+  receipt_path TEXT,
+  notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_study_loan_payments_recipient ON study_loan_payments (recipient_id);
 ```
 
 4. Confirm the query runs without errors. The table `study_loan_applications` is now ready. If you added the optional `total_paid` and `payments_made` columns, applicants can record repayments from their status page.
