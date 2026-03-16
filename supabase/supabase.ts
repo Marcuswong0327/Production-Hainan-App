@@ -1,19 +1,38 @@
 import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '../../../utils/supabase/info';
 
-export const supabase = createClient(
-  `https://${projectId}.supabase.co`,
-  publicAnonKey
-);
+// Reuse the same env-based config pattern as lib/supabase.ts
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-export const API_URL = `https://${projectId}.supabase.co/functions/v1/make-server-53266993`;
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.warn(
+    '[supabase/supabase.ts] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. ' +
+      'Add them to .env to enable API requests.'
+  );
+}
+
+export const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : createClient('https://example.supabase.co', 'public-anon-key-not-configured');
+
+// Point at the Supabase Edge Function used by this app.
+// Example: https://<project-ref>.supabase.co/functions/v1/make-server-53266993
+export const API_URL = supabaseUrl
+  ? `${supabaseUrl}/functions/v1/make-server-53266993`
+  : '';
 
 export async function apiRequest(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<any> {
+  if (!supabaseUrl || !supabaseAnonKey || !API_URL) {
+    throw new Error(
+      'Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env file.'
+    );
+  }
+
   const session = await supabase.auth.getSession();
-  const accessToken = session.data.session?.access_token || publicAnonKey;
+  const accessToken = session.data.session?.access_token || supabaseAnonKey;
 
   console.log(`API Request to: ${API_URL}${endpoint}`);
   

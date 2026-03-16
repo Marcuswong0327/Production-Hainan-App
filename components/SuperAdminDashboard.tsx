@@ -69,12 +69,7 @@ interface WelfareApplication {
 }
 
 export function SuperAdminDashboard() {
-  const { signOut, changePassword } = useAuth();
-  const [showChangePassword, setShowChangePassword] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
-  const [changePasswordError, setChangePasswordError] = useState('');
+  const { signOut } = useAuth();
   const [pendingEvents, setPendingEvents] = useState<Event[]>([]);
   const [associations, setAssociations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -98,6 +93,14 @@ export function SuperAdminDashboard() {
   const [showAddRecipientPage, setShowAddRecipientPage] = useState(false);
   const [selectedRecipientForPayment, setSelectedRecipientForPayment] = useState<LoanRecipient | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
+  const [selectedRecipientForDetails, setSelectedRecipientForDetails] = useState<LoanRecipient | null>(null);
+  const [editRecipient, setEditRecipient] = useState<LoanRecipient | null>(null);
+  const [showNotificationDialog, setShowNotificationDialog] = useState(false);
+  const [notificationTarget, setNotificationTarget] = useState<'all' | 'active' | 'completed'>('active');
+  const [notificationMessage, setNotificationMessage] = useState(
+    'Your study loan repayment is due soon. Please check your loan status in the app.'
+  );
+  const [notificationSchedule, setNotificationSchedule] = useState('');
 
   // New Association Form
   const [newAssociation, setNewAssociation] = useState({
@@ -370,6 +373,53 @@ export function SuperAdminDashboard() {
       localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
     }
     setLoanRecipients(prev => [newRecipient, ...prev]);
+  };
+
+  const updateLoanRecipient = async (updated: LoanRecipient) => {
+    try {
+      if (isSupabaseConfigured() && supabase) {
+        const { error } = await supabase.from('study_loan_recipients').update({
+          full_name: updated.full_name,
+          email: updated.email,
+          phone_number: updated.phone_number,
+          association: updated.association,
+          university: updated.university,
+          courses: updated.courses,
+          admission_date: updated.admission_date || null,
+          expected_graduation_date: updated.expected_graduation_date || null,
+          loan_type: updated.loan_type || null,
+          loan_amount: updated.loan_amount,
+          total_paid: updated.total_paid,
+          payments_made: updated.payments_made,
+          status: updated.status,
+          guarantor_relationship: updated.guarantor_relationship || null,
+          guarantor_phone_number: updated.guarantor_phone_number || null,
+          offer_letter_path: updated.offer_letter_path || null,
+          ic_front_path: updated.ic_front_path || null,
+          ic_back_path: updated.ic_back_path || null,
+          guarantor_ic_front_path: updated.guarantor_ic_front_path || null,
+          guarantor_ic_back_path: updated.guarantor_ic_back_path || null,
+          ic_front_text: updated.ic_front_text || null,
+          ic_back_text: updated.ic_back_text || null,
+          guarantor_ic_text: updated.guarantor_ic_text || null,
+          notes: updated.notes || null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', updated.id);
+        if (error) throw error;
+      } else {
+        const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
+        const idx = list.findIndex((r: LoanRecipient) => r.id === updated.id);
+        if (idx !== -1) {
+          list[idx] = { ...list[idx], ...updated, updated_at: new Date().toISOString() };
+          localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
+        }
+      }
+      setLoanRecipients(prev => prev.map(r => r.id === updated.id ? { ...r, ...updated } : r));
+      setSelectedRecipientForDetails(null);
+      setEditRecipient(null);
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update recipient.');
+    }
   };
 
   const handleRecordPayment = async () => {
@@ -736,86 +786,12 @@ export function SuperAdminDashboard() {
             <p className="text-sm text-gray-600">总会管理中心</p>
           </div>
           <div className="flex gap-2">
-            {isSupabaseConfigured() && changePassword && (
-              <Button variant="outline" size="sm" onClick={() => { setShowChangePassword(true); setNewPassword(''); setConfirmPassword(''); setChangePasswordError(''); }}>
-                Change password
-              </Button>
-            )}
             <Button variant="outline" onClick={signOut}>
               Sign Out
             </Button>
           </div>
         </div>
       </div>
-
-      {/* Change password dialog */}
-      {showChangePassword && changePassword && (
-        <Dialog open={showChangePassword} onOpenChange={setShowChangePassword}>
-          <DialogContent className="bg-white text-gray-900">
-            <DialogHeader>
-              <DialogTitle>Change password</DialogTitle>
-              <DialogDescription>
-                Set a new password for your super admin account. You will need to sign in again with the new password.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="new-password">New password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => { setNewPassword(e.target.value); setChangePasswordError(''); }}
-                  placeholder="Enter new password"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirm-password">Confirm new password</Label>
-                <Input
-                  id="confirm-password"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => { setConfirmPassword(e.target.value); setChangePasswordError(''); }}
-                  placeholder="Confirm new password"
-                  required
-                />
-              </div>
-              {changePasswordError && <p className="text-sm text-red-600">{changePasswordError}</p>}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowChangePassword(false)}>Cancel</Button>
-              <Button
-                onClick={async () => {
-                  if (newPassword.length < 6) {
-                    setChangePasswordError('Password must be at least 6 characters');
-                    return;
-                  }
-                  if (newPassword !== confirmPassword) {
-                    setChangePasswordError('Passwords do not match');
-                    return;
-                  }
-                  setChangePasswordLoading(true);
-                  setChangePasswordError('');
-                  try {
-                    await changePassword(newPassword);
-                    setShowChangePassword(false);
-                    alert('Password updated. You can sign in with your new password next time.');
-                    await signOut();
-                  } catch (e: any) {
-                    setChangePasswordError(e?.message || 'Failed to update password');
-                  } finally {
-                    setChangePasswordLoading(false);
-                  }
-                }}
-                disabled={changePasswordLoading || !newPassword || !confirmPassword}
-              >
-                {changePasswordLoading ? 'Updating...' : 'Update password'}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
 
 
       <div className="max-w-7xl mx-auto px-4 py-6">
@@ -1048,10 +1024,15 @@ export function SuperAdminDashboard() {
                       Manually add students who received the study loan to track repayment progress. Data is used for notifications later.
                     </CardDescription>
                   </div>
-                  <Button onClick={() => setShowAddRecipientPage(true)}>
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Add student
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => setShowNotificationDialog(true)}>
+                      Send notifications
+                    </Button>
+                    <Button onClick={() => setShowAddRecipientPage(true)}>
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Add student
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1092,16 +1073,36 @@ export function SuperAdminDashboard() {
                                   <span className="text-sm font-medium">Remaining: RM {remaining.toLocaleString()}</span>
                                 </div>
                               </div>
-                              {r.status === 'active' && remaining > 0 && (
+                              <div className="flex flex-col gap-2 shrink-0 relative z-10">
                                 <Button
+                                  type="button"
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => { setSelectedRecipientForPayment(r); setPaymentAmount(String(Math.floor(r.loan_amount / MONTHLY_PAYMENTS))); }}
+                                  className="cursor-pointer"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setSelectedRecipientForDetails(r);
+                                    setEditRecipient({ ...r });
+                                  }}
                                 >
-                                  <DollarSign className="w-4 h-4 mr-1" />
-                                  Record payment
+                                  <Eye className="w-4 h-4 mr-1" />
+                                  View / Edit
                                 </Button>
-                              )}
+                                {r.status === 'active' && remaining > 0 && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setSelectedRecipientForPayment(r);
+                                      setPaymentAmount(String(Math.floor(r.loan_amount / MONTHLY_PAYMENTS)));
+                                    }}
+                                  >
+                                    <DollarSign className="w-4 h-4 mr-1" />
+                                    Record payment
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           </CardContent>
                         </Card>
@@ -1786,6 +1787,346 @@ export function SuperAdminDashboard() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* View / Edit loan recipient details */}
+      <Dialog open={!!selectedRecipientForDetails} onOpenChange={(open) => { if (!open) { setSelectedRecipientForDetails(null); setEditRecipient(null); } }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white text-gray-900">
+          {selectedRecipientForDetails && editRecipient && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Edit loan recipient</DialogTitle>
+                <DialogDescription>
+                  Update details for {selectedRecipientForDetails.full_name}. Changes sync to Supabase.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Full name</Label>
+                    <Input
+                      value={editRecipient.full_name}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, full_name: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input
+                      type="email"
+                      value={editRecipient.email}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, email: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input
+                      value={editRecipient.phone_number}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, phone_number: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Association</Label>
+                    <Input
+                      value={editRecipient.association}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, association: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>University</Label>
+                    <Input
+                      value={editRecipient.university}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, university: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Courses</Label>
+                    <Input
+                      value={editRecipient.courses}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, courses: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Admission date</Label>
+                    <Input
+                      type="date"
+                      value={editRecipient.admission_date || ''}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, admission_date: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Expected graduation date</Label>
+                    <Input
+                      type="date"
+                      value={editRecipient.expected_graduation_date || ''}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, expected_graduation_date: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>Loan amount (RM)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={editRecipient.loan_amount}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, loan_amount: parseInt(e.target.value || '0', 10) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Total paid (RM)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={editRecipient.total_paid}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, total_paid: parseInt(e.target.value || '0', 10) })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Payments made</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={editRecipient.payments_made}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, payments_made: parseInt(e.target.value || '0', 10) })}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Guarantor relationship</Label>
+                    <Input
+                      value={editRecipient.guarantor_relationship || ''}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_relationship: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Guarantor phone</Label>
+                    <Input
+                      value={editRecipient.guarantor_phone_number || ''}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_phone_number: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                {/* Uploaded IC details and files (student + guarantor) */}
+                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                  <h3 className="font-semibold text-sm text-gray-900">IC details from uploaded files</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Student IC information</Label>
+                      <Textarea
+                        rows={3}
+                        placeholder="IC number / address if recorded when adding the student"
+                        value={editRecipient.ic_front_text || ''}
+                        onChange={(e) => setEditRecipient({ ...editRecipient, ic_front_text: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Guarantor IC information</Label>
+                      <Textarea
+                        rows={3}
+                        placeholder="Guarantor IC number / details"
+                        value={editRecipient.guarantor_ic_text || ''}
+                        onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_ic_text: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {editRecipient.offer_letter_path && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openStudyLoanDocument(editRecipient.offer_letter_path || null, 'Offer letter')}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" /> Offer letter
+                      </Button>
+                    )}
+                    {editRecipient.ic_front_path && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openStudyLoanDocument(editRecipient.ic_front_path || null, 'Student IC front')}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" /> Student IC front
+                      </Button>
+                    )}
+                    {editRecipient.ic_back_path && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openStudyLoanDocument(editRecipient.ic_back_path || null, 'Student IC back')}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" /> Student IC back
+                      </Button>
+                    )}
+                    {editRecipient.guarantor_ic_front_path && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openStudyLoanDocument(editRecipient.guarantor_ic_front_path || null, 'Guarantor IC front')}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" /> Guarantor IC front
+                      </Button>
+                    )}
+                    {editRecipient.guarantor_ic_back_path && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openStudyLoanDocument(editRecipient.guarantor_ic_back_path || null, 'Guarantor IC back')}
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" /> Guarantor IC back
+                      </Button>
+                    )}
+                    {!editRecipient.offer_letter_path &&
+                      !editRecipient.ic_front_path &&
+                      !editRecipient.ic_back_path &&
+                      !editRecipient.guarantor_ic_front_path &&
+                      !editRecipient.guarantor_ic_back_path && (
+                        <p className="text-xs text-gray-500">
+                          No document paths stored for this recipient. New entries will save paths when files are uploaded.
+                        </p>
+                      )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={editRecipient.status}
+                    onValueChange={(v) => setEditRecipient({ ...editRecipient, status: v as LoanRecipient['status'] })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="completed">Completed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Notes</Label>
+                  <Textarea
+                    value={editRecipient.notes || ''}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, notes: e.target.value })}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedRecipientForDetails(null);
+                    setEditRecipient(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => {
+                    if (editRecipient) updateLoanRecipient(editRecipient);
+                  }}
+                >
+                  Save changes
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Schedule notifications for loan recipients */}
+      <Dialog open={showNotificationDialog} onOpenChange={setShowNotificationDialog}>
+        <DialogContent className="max-w-lg bg-white text-gray-900">
+          <DialogHeader>
+            <DialogTitle>Send notifications to recipients</DialogTitle>
+            <DialogDescription>
+              Choose who to notify, customise the message, and when it should be sent.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Who to send to</Label>
+              <Select
+                value={notificationTarget}
+                onValueChange={(v) => setNotificationTarget(v as 'all' | 'active' | 'completed')}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select recipients" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All loan recipients</SelectItem>
+                  <SelectItem value="active">Only active (not fully paid)</SelectItem>
+                  <SelectItem value="completed">Only completed loans</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>When to send</Label>
+              <Input
+                type="datetime-local"
+                value={notificationSchedule}
+                onChange={(e) => setNotificationSchedule(e.target.value)}
+              />
+              <p className="text-xs text-gray-500">
+                Date and time when notifications should be sent.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Message template</Label>
+              <Textarea
+                rows={4}
+                value={notificationMessage}
+                onChange={(e) => setNotificationMessage(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNotificationDialog(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                const scheduleAt = notificationSchedule || new Date().toISOString();
+                try {
+                  if (isSupabaseConfigured() && supabase) {
+                    supabase.from('scheduled_notifications').insert({
+                      id: `loan_${Date.now()}`,
+                      target: notificationTarget,
+                      message: notificationMessage,
+                      schedule_at: scheduleAt,
+                      created_at: new Date().toISOString(),
+                    });
+                  } else {
+                    const list = JSON.parse(localStorage.getItem('myHainanScheduledNotifications') || '[]');
+                    list.push({
+                      id: `loan_${Date.now()}`,
+                      target: notificationTarget,
+                      message: notificationMessage,
+                      schedule_at: scheduleAt,
+                      created_at: new Date().toISOString(),
+                    });
+                    localStorage.setItem('myHainanScheduledNotifications', JSON.stringify(list));
+                  }
+                  alert('Notification schedule saved.');
+                  setShowNotificationDialog(false);
+                } catch (e: any) {
+                  alert(e?.message || 'Failed to save notification schedule');
+                }
+              }}
+            >
+              Save schedule
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

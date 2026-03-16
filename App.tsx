@@ -1,13 +1,24 @@
+import { useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './AuthContext';
 import { AuthPage } from './components/AuthPage';
 import { PublicHomePage } from './components/PublicHomePage';
 import { SuperAdminDashboard } from './components/SuperAdminDashboard';
+import { setupPushNotifications } from './lib/pushNotifications';
 // import { SubAdminDashboard } from './components/SubAdminDashboard';
 // import { SubEditorDashboard } from './components/SubEditorDashboard';
 
 // AppContent component - must be inside AuthProvider
 function AppContent() {
   const { user, loading } = useAuth();
+  const pushSetupDone = useRef(false);
+
+  // PWA push: after login, prompt for notification permission once and save subscription
+  useEffect(() => {
+    if (!user?.id || pushSetupDone.current) return;
+    console.log('setupPushNotifications', user.id);
+    pushSetupDone.current = true;
+    setupPushNotifications(user.id).catch(() => {});
+  }, [user?.id]);
 
   if (loading) {
     return (
