@@ -514,72 +514,7 @@ export function SuperAdminDashboard() {
     }
   };
 
-  const handleRecordPayment = async () => {
-    if (!selectedRecipientForPayment) return;
-    const month = parseInt(paymentMonth, 10);
-    const amount = parseInt(paymentAmount, 10);
-    if (isNaN(amount) || amount <= 0) {
-      alert('Enter a valid payment amount.');
-      return;
-    }
-    if (isNaN(month) || month < 1 || month > MONTHLY_PAYMENTS) {
-      alert(`Please choose a valid month (1-${MONTHLY_PAYMENTS}).`);
-      return;
-    }
-    const newTotalPaid = selectedRecipientForPayment.total_paid + amount;
-    const newPaymentsMade = selectedRecipientForPayment.payments_made + 1;
-    const newStatus = newTotalPaid >= selectedRecipientForPayment.loan_amount ? 'completed' : 'active';
-    try {
-      if (isSupabaseConfigured() && supabase) {
-        let receiptPath: string | null = null;
-        if (paymentReceiptFile) {
-          const ext = paymentReceiptFile.name.split('.').pop() || 'bin';
-          const path = `recipients/${selectedRecipientForPayment.id}/payments/${Date.now()}.${ext}`;
-          const { error: uploadError } = await supabase.storage.from(STUDY_LOAN_BUCKET).upload(path, paymentReceiptFile, { upsert: true });
-          if (uploadError) throw uploadError;
-          receiptPath = path;
-        }
-        const { error } = await supabase.from('study_loan_recipients').update({
-          total_paid: newTotalPaid,
-          payments_made: newPaymentsMade,
-          status: newStatus,
-          updated_at: new Date().toISOString(),
-        }).eq('id', selectedRecipientForPayment.id);
-        if (error) throw error;
-        const { error: payError } = await supabase.from('study_loan_payments').insert({
-          recipient_id: selectedRecipientForPayment.id,
-          amount,
-          payment_month: month,
-          receipt_path: receiptPath,
-        });
-        if (payError) throw payError;
-      } else {
-        const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
-        const idx = list.findIndex((r: LoanRecipient) => r.id === selectedRecipientForPayment.id);
-        if (idx !== -1) {
-          list[idx] = { ...list[idx], total_paid: newTotalPaid, payments_made: newPaymentsMade, status: newStatus, updated_at: new Date().toISOString() };
-          localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
-        }
-        const payments = JSON.parse(localStorage.getItem('myHainanLoanPayments') || '[]');
-        payments.push({
-          id: Date.now().toString(),
-          recipientId: selectedRecipientForPayment.id,
-          amount,
-          paymentMonth: month,
-          paidAt: new Date().toISOString(),
-          receiptName: paymentReceiptFile?.name || '',
-        });
-        localStorage.setItem('myHainanLoanPayments', JSON.stringify(payments));
-      }
-      setLoanRecipients(prev => prev.map(r => r.id === selectedRecipientForPayment.id ? { ...r, total_paid: newTotalPaid, payments_made: newPaymentsMade, status: newStatus, updated_at: new Date().toISOString() } : r));
-      setSelectedRecipientForPayment(null);
-      setPaymentAmount('');
-      setPaymentMonth('');
-      setPaymentReceiptFile(null);
-    } catch (err: any) {
-      alert(err?.message || 'Failed to record payment.');
-    }
-  };
+  // record payments now handled by RecordLoanPaymentsPage
 
 
   const handleApproveEvent = async (eventId: string) => {
@@ -1240,8 +1175,7 @@ export function SuperAdminDashboard() {
                                     size="sm"
                                     variant="outline"
                                     onClick={() => {
-                                      setSelectedRecipientForPayment(r);
-                                      setPaymentAmount(String(Math.floor(r.loan_amount / MONTHLY_PAYMENTS)));
+                                      setRecordPaymentsRecipient(r);
                                     }}
                                   >
                                     <DollarSign className="w-4 h-4 mr-1" />
@@ -1912,74 +1846,6 @@ export function SuperAdminDashboard() {
               Reject Application
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Record payment for loan recipient */}
-      <Dialog open={!!selectedRecipientForPayment} onOpenChange={(open) => !open && setSelectedRecipientForPayment(null)}>
-        <DialogContent className="bg-white text-gray-900">
-          {selectedRecipientForPayment && (
-            <>
-              <DialogHeader>
-                <DialogTitle>Record payment</DialogTitle>
-                <DialogDescription>
-                  {selectedRecipientForPayment.full_name} · Remaining: RM {(selectedRecipientForPayment.loan_amount - selectedRecipientForPayment.total_paid).toLocaleString()}
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label htmlFor="payment-month">Month in schedule</Label>
-                  <Select
-                    value={paymentMonth}
-                    onValueChange={(v) => setPaymentMonth(v)}
-                  >
-                    <SelectTrigger id="payment-month">
-                      <SelectValue placeholder="Select month (1 - 20)" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: MONTHLY_PAYMENTS }, (_, idx) => idx + 1).map((m) => (
-                        <SelectItem key={m} value={String(m)}>
-                          Month {m}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="payment-amount">Amount (RM)</Label>
-                  <Input
-                    id="payment-amount"
-                    type="number"
-                    min="1"
-                    value={paymentAmount}
-                    onChange={(e) => setPaymentAmount(e.target.value)}
-                    placeholder={String(Math.floor(selectedRecipientForPayment.loan_amount / MONTHLY_PAYMENTS))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="payment-receipt">Receipt / proof (optional)</Label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                    <input
-                      id="payment-receipt"
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={(e) => setPaymentReceiptFile(e.target.files?.[0] || null)}
-                    />
-                    <label htmlFor="payment-receipt" className="cursor-pointer text-sm text-gray-600">
-                      {paymentReceiptFile ? paymentReceiptFile.name : 'Upload receipt / evidence (optional)'}
-                    </label>
-                  </div>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => { setSelectedRecipientForPayment(null); setPaymentAmount(''); setPaymentMonth(''); setPaymentReceiptFile(null); }}>Cancel</Button>
-                <Button onClick={() => { handleRecordPayment(); }} disabled={!paymentAmount || parseInt(paymentAmount, 10) <= 0 || !paymentMonth}>
-                  Record payment
-                </Button>
-              </DialogFooter>
-            </>
-          )}
         </DialogContent>
       </Dialog>
 
