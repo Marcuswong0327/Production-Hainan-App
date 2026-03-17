@@ -20,6 +20,7 @@ import { StudyLoanStatusPage } from './StudyLoanStatusPage';
 import { WelfarePage } from './WelfarePage';
 import { EventBookingPage } from './EventBookingPage';
 import { NotificationPanel } from './NotificationPanel';
+import { FCMNotificationButton } from './FCMNotificationButton';
 import { RoleSwitcher } from './RoleSwitcher';
 import {
   Carousel,
@@ -207,6 +208,9 @@ export function PublicHomePage() {
           </div>
           <div className="flex items-center gap-2">
             <NotificationPanel userId={user?.id} />
+            {user?.id && (
+              <FCMNotificationButton userId={user.id} />
+            )}
             <Button variant="outline" size="sm" onClick={signOut}>
               Sign Out
             </Button>
