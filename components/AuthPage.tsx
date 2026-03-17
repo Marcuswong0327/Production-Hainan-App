@@ -99,10 +99,10 @@ export function AuthPage() {
             <span className="text-white text-3xl">Hi</span>
           </div>
           <CardTitle className="text-2xl font-bold text-gray-900">
-            Welcome back
+            海南会馆
           </CardTitle>
           <CardDescription className="text-base">
-            海南会馆 Super App
+            {/* Brand subtitle intentionally kept minimal */}
           </CardDescription>
         </CardHeader>
         <CardContent>
