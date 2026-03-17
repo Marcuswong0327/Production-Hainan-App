@@ -2,9 +2,11 @@
 // Supabase Edge Function: process scheduled_notifications and send real FCM push.
 // Resolves loan recipients by target → profiles by email → fcm_tokens → Firebase Admin multicast.
 // Run on a schedule (e.g. cron every 5 min) or trigger manually via POST.
+// You only need this function for the schedule flow; send-fcm-notifications is optional (on-demand).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import * as admin from "npm:firebase-admin@12";
+import { getApps, initializeApp, cert } from "npm:firebase-admin/app";
+import { getMessaging } from "npm:firebase-admin/messaging";
 
 const DEFAULT_TITLE = "海南会馆";
 
@@ -17,21 +19,17 @@ function getSupabaseAdmin() {
   });
 }
 
-function getFirebaseApp(): admin.app.App {
-  try {
-    return admin.app();
-  } catch {
-    // not initialized
-  }
+function ensureFirebaseApp() {
+  if (getApps().length > 0) return;
   const raw = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
   if (!raw?.trim()) throw new Error("Missing FIREBASE_SERVICE_ACCOUNT secret");
-  let serviceAccount: admin.ServiceAccount;
+  let serviceAccount: Record<string, unknown>;
   try {
-    serviceAccount = JSON.parse(raw) as admin.ServiceAccount;
+    serviceAccount = JSON.parse(raw) as Record<string, unknown>;
   } catch {
     throw new Error("FIREBASE_SERVICE_ACCOUNT must be valid JSON");
   }
-  return admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  initializeApp({ credential: cert(serviceAccount) });
 }
 
 type ScheduledNotification = {
@@ -89,11 +87,11 @@ async function getFCMTokensForUser(supabase: ReturnType<typeof createClient>, us
 
 async function processOneNotification(
   supabase: ReturnType<typeof createClient>,
-  messaging: admin.messaging.Messaging,
   notification: ScheduledNotification
 ) {
   const recipients = await getLoanRecipientsForTarget(supabase, notification.target);
   const allTokens: string[] = [];
+  const userIdsToNotify = new Set<string>();
   const errors: string[] = [];
 
   for (const recipient of recipients) {
@@ -101,22 +99,34 @@ async function processOneNotification(
     const profile = await getProfileByEmail(supabase, recipient.email);
     if (!profile) continue;
     const tokens = await getFCMTokensForUser(supabase, profile.id);
+    if (tokens.length > 0) userIdsToNotify.add(profile.id);
     allTokens.push(...tokens);
   }
 
   let sentCount = 0;
   if (allTokens.length > 0) {
-    const message: admin.messaging.MulticastMessage = {
+    const messaging = getMessaging();
+    const result = await messaging.sendEachForMulticast({
       tokens: allTokens,
       notification: {
         title: DEFAULT_TITLE,
         body: notification.message,
       },
-    };
-    const result = await messaging.sendEachForMulticast(message);
+    });
     sentCount = result.successCount;
     result.responses.forEach((r, i) => {
       if (!r.success && r.error) errors.push(`token ${i}: ${r.error.message}`);
+    });
+  }
+
+  // Insert in-app notification (bell icon) for each user who received the FCM
+  for (const uid of userIdsToNotify) {
+    await supabase.from("user_notifications").insert({
+      user_id: uid,
+      title: DEFAULT_TITLE,
+      message: notification.message,
+      type: "system",
+      read: false,
     });
   }
 
@@ -135,10 +145,18 @@ async function processOneNotification(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" } });
+    return new Response("ok", {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+      },
+    });
   }
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   try {
@@ -151,12 +169,11 @@ Deno.serve(async (req) => {
       );
     }
 
-    const app = getFirebaseApp();
-    const messaging = admin.messaging(app);
+    ensureFirebaseApp();
     const results: { id: string; sentCount: number; errors: number }[] = [];
 
     for (const n of due) {
-      const r = await processOneNotification(supabase, messaging, n);
+      const r = await processOneNotification(supabase, n);
       results.push(r);
     }
 
@@ -166,9 +183,9 @@ Deno.serve(async (req) => {
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return new Response(
-      JSON.stringify({ ok: false, error: message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ ok: false, error: message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 });

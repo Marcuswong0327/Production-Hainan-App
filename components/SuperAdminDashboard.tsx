@@ -2484,7 +2484,10 @@ export function SuperAdminDashboard() {
             <Button variant="outline" onClick={() => setShowNotificationDialog(false)}>Cancel</Button>
             <Button
               onClick={async () => {
-                const scheduleAt = notificationSchedule || new Date().toISOString();
+                // datetime-local returns local time without timezone. Convert to UTC ISO for timestamptz.
+                const scheduleAt = notificationSchedule
+                  ? new Date(notificationSchedule).toISOString()
+                  : new Date().toISOString();
                 try {
                   if (isSupabaseConfigured() && supabase) {
                     const { error } = await supabase.from('scheduled_notifications').insert({

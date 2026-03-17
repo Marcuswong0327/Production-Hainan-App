@@ -3,6 +3,7 @@ import { Bell } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface Notification {
   id: string;
@@ -11,6 +12,7 @@ interface Notification {
   timestamp: string;
   read: boolean;
   type: 'event' | 'donation' | 'loan' | 'system';
+  fromSupabase?: boolean;
 }
 
 export function NotificationPanel({ userId }: { userId?: string }) {
@@ -18,38 +20,68 @@ export function NotificationPanel({ userId }: { userId?: string }) {
   const [showPanel, setShowPanel] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // Load notifications from localStorage
-    const saved = localStorage.getItem('myHainanNotifications');
-    if (saved) {
-      const allNotifications = JSON.parse(saved);
-      const userNotifications = allNotifications.filter((n: any) => n.userId === userId);
-      setNotifications(userNotifications);
-    } else {
-      // Demo notifications
-      const demoNotifications = [
-        {
-          id: '1',
-          userId,
-          title: 'Welcome to MyHainan!',
-          message: 'Thank you for joining our community. Explore events and start earning points!',
-          timestamp: new Date().toISOString(),
-          read: false,
-          type: 'system',
-        },
-        {
-          id: '2',
-          userId,
-          title: 'New Event Available',
-          message: 'Chinese New Year Celebration 2026 is now open for booking!',
-          timestamp: new Date(Date.now() - 3600000).toISOString(),
-          read: false,
-          type: 'event',
-        },
-      ];
-      setNotifications(demoNotifications);
-      localStorage.setItem('myHainanNotifications', JSON.stringify(demoNotifications));
+  const loadNotifications = async () => {
+    const list: Notification[] = [];
+    if (userId && isSupabaseConfigured() && supabase) {
+      const { data } = await supabase
+        .from('user_notifications')
+        .select('id, title, message, read, type, created_at')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (data?.length) {
+        data.forEach((row: { id: string; title: string; message: string; read: boolean; type: string; created_at: string }) => {
+          list.push({
+            id: row.id,
+            title: row.title,
+            message: row.message,
+            timestamp: row.created_at,
+            read: row.read,
+            type: (row.type as Notification['type']) || 'system',
+            fromSupabase: true,
+          });
+        });
+      }
     }
+    const saved = localStorage.getItem('myHainanNotifications');
+    if (saved && userId) {
+      const all = JSON.parse(saved);
+      const local = all.filter((n: any) => n.userId === userId).map((n: any) => ({
+        id: n.id,
+        title: n.title,
+        message: n.message,
+        timestamp: n.timestamp,
+        read: n.read,
+        type: n.type,
+        fromSupabase: false,
+      }));
+      const seen = new Set(list.map(n => n.id));
+      local.forEach((n: Notification) => {
+        if (!seen.has(n.id)) {
+          list.push(n);
+          seen.add(n.id);
+        }
+      });
+    }
+    if (list.length === 0 && userId && !saved) {
+      list.push({
+        id: '1',
+        title: 'Welcome to 海南会馆!',
+        message: 'Explore events and start earning points.',
+        timestamp: new Date().toISOString(),
+        read: false,
+        type: 'system',
+      });
+    }
+    list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    setNotifications(list);
+  };
+
+  useEffect(() => {
+    loadNotifications();
+    if (!userId) return;
+    const interval = setInterval(loadNotifications, 30000);
+    return () => clearInterval(interval);
   }, [userId]);
 
   // Close panel when clicking outside
@@ -71,13 +103,16 @@ export function NotificationPanel({ userId }: { userId?: string }) {
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
-  const markAsRead = (id: string) => {
+  const markAsRead = async (id: string) => {
+    const item = notifications.find(n => n.id === id);
     const updated = notifications.map(n =>
       n.id === id ? { ...n, read: true } : n
     );
     setNotifications(updated);
 
-    // Update localStorage
+    if (item?.fromSupabase && isSupabaseConfigured() && supabase) {
+      await supabase.from('user_notifications').update({ read: true }).eq('id', id).eq('user_id', userId!);
+    }
     const allNotifications = JSON.parse(localStorage.getItem('myHainanNotifications') || '[]');
     const updatedAll = allNotifications.map((n: any) =>
       n.id === id ? { ...n, read: true } : n
@@ -85,11 +120,11 @@ export function NotificationPanel({ userId }: { userId?: string }) {
     localStorage.setItem('myHainanNotifications', JSON.stringify(updatedAll));
   };
 
-  const markAllAsRead = () => {
-    const updated = notifications.map(n => ({ ...n, read: true }));
-    setNotifications(updated);
-
-    // Update localStorage
+  const markAllAsRead = async () => {
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    if (userId && isSupabaseConfigured() && supabase) {
+      await supabase.from('user_notifications').update({ read: true }).eq('user_id', userId);
+    }
     const allNotifications = JSON.parse(localStorage.getItem('myHainanNotifications') || '[]');
     const updatedAll = allNotifications.map((n: any) =>
       n.userId === userId ? { ...n, read: true } : n
