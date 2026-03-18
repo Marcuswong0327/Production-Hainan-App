@@ -9,6 +9,12 @@ import { getApps, initializeApp, cert } from "npm:firebase-admin/app";
 import { getMessaging } from "npm:firebase-admin/messaging";
 
 const DEFAULT_TITLE = "海南会馆";
+const EMAIL_SUBJECT = "海南会馆通知";
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
 function getSupabaseAdmin() {
   const url = Deno.env.get("SUPABASE_URL");
@@ -43,6 +49,47 @@ type ScheduledNotification = {
 
 type LoanRecipient = { id: string; email: string; status: "active" | "completed" };
 type Profile = { id: string; email: string };
+
+async function sendResendEmails(toEmails: string[], message: string) {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  const from = Deno.env.get("RESEND_FROM");
+  if (!apiKey?.trim() || !from?.trim()) {
+    throw new Error("Missing RESEND_API_KEY or RESEND_FROM secret");
+  }
+  if (toEmails.length === 0) return { sent: 0, errors: [] as string[] };
+
+  const errors: string[] = [];
+  let sent = 0;
+
+  for (const to of toEmails) {
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from,
+          to: [to],
+          subject: EMAIL_SUBJECT,
+          text: message,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        errors.push(`email ${to}: ${json?.message || json?.error || `HTTP ${res.status}`}`);
+      } else {
+        sent += 1;
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push(`email ${to}: ${msg}`);
+    }
+  }
+
+  return { sent, errors };
+}
 
 async function getDueNotifications(supabase: ReturnType<typeof createClient>) {
   const { data, error } = await supabase
@@ -94,13 +141,31 @@ async function processOneNotification(
   const userIdsToNotify = new Set<string>();
   const errors: string[] = [];
 
+  // Email recipients are based on the loan recipients list (deduped)
+  const emailSet = new Set<string>();
+
   for (const recipient of recipients) {
     if (!recipient.email) continue;
+    emailSet.add(recipient.email.trim());
     const profile = await getProfileByEmail(supabase, recipient.email);
     if (!profile) continue;
     const tokens = await getFCMTokensForUser(supabase, profile.id);
     if (tokens.length > 0) userIdsToNotify.add(profile.id);
     allTokens.push(...tokens);
+  }
+
+  // Send email (independent of FCM tokens)
+  const emailList = Array.from(emailSet).filter((e) => e.length > 0);
+  let emailSent = 0;
+  try {
+    const emailResult = await sendResendEmails(emailList, notification.message);
+    emailSent = emailResult.sent;
+    if (emailResult.errors.length) {
+      errors.push(...emailResult.errors);
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    errors.push(`email: ${msg}`);
   }
 
   let sentCount = 0;
@@ -134,8 +199,12 @@ async function processOneNotification(
     .from("scheduled_notifications")
     .update({
       sent_at: new Date().toISOString(),
+      // sent_count tracks successful push deliveries (tokens). Email count is included in error_log summary.
       sent_count: sentCount,
-      error_log: errors.length ? errors.join("\n") : null,
+      error_log: [
+        `email_sent=${emailSent}/${emailList.length}`,
+        errors.length ? errors.join("\n") : "",
+      ].filter(Boolean).join("\n") || null,
     })
     .eq("id", notification.id);
 
@@ -145,17 +214,12 @@ async function processOneNotification(
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", {
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-      },
-    });
+    return new Response("ok", { headers: corsHeaders });
   }
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
@@ -165,7 +229,7 @@ Deno.serve(async (req) => {
     if (due.length === 0) {
       return new Response(
         JSON.stringify({ ok: true, processed: 0, message: "No due notifications" }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -179,13 +243,13 @@ Deno.serve(async (req) => {
 
     return new Response(
       JSON.stringify({ ok: true, processed: due.length, results }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return new Response(JSON.stringify({ ok: false, error: message }), {
       status: 500,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });

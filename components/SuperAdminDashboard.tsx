@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../AuthContext';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
@@ -9,8 +9,7 @@ import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
-import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
-import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown, CreditCard, ExternalLink, UserPlus, DollarSign, Trash2, SlidersHorizontal } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown, CreditCard, ExternalLink, UserPlus, DollarSign, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { StudyLoanApplication, LoanRecipient } from '../types/studyLoan';
@@ -104,15 +103,10 @@ export function SuperAdminDashboard() {
     'Your study loan repayment is due soon. Please check your loan status in the app.'
   );
   const [notificationSchedule, setNotificationSchedule] = useState('');
+  const [sendingNotificationNow, setSendingNotificationNow] = useState(false);
+  const [savingNotificationSchedule, setSavingNotificationSchedule] = useState(false);
+  const [lastSendNowAt, setLastSendNowAt] = useState<number>(0);
   const [showLoanStats, setShowLoanStats] = useState(false);
-
-  // Filtering & sorting for Loan Recipients
-  const [recipientSearchName, setRecipientSearchName] = useState('');
-  const [recipientFilterStatus, setRecipientFilterStatus] = useState<'all' | 'active' | 'completed'>('all');
-  const [recipientFilterUniversity, setRecipientFilterUniversity] = useState('');
-  const [recipientFilterAssociation, setRecipientFilterAssociation] = useState('');
-  const [recipientFilterAmount, setRecipientFilterAmount] = useState<'all' | 'under_5k' | '5k_10k' | 'over_10k'>('all');
-  const [recipientSortBy, setRecipientSortBy] = useState<'name_asc' | 'name_desc' | 'university' | 'association' | 'amount_asc' | 'amount_desc'>('name_asc');
 
   // New Association Form
   const [newAssociation, setNewAssociation] = useState({
@@ -137,87 +131,6 @@ export function SuperAdminDashboard() {
 
     return () => clearInterval(interval);
   }, []);
-
-  const recipientUniversities = useMemo(() => {
-    return Array.from(
-      new Set(
-        loanRecipients
-          .map((r) => (r.university || '').trim())
-          .filter((v) => v.length > 0)
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [loanRecipients]);
-
-  const recipientAssociations = useMemo(() => {
-    return Array.from(
-      new Set(
-        loanRecipients
-          .map((r) => (r.association || '').trim())
-          .filter((v) => v.length > 0)
-      )
-    ).sort((a, b) => a.localeCompare(b));
-  }, [loanRecipients]);
-
-  const filteredSortedRecipients = useMemo(() => {
-    const searchLower = recipientSearchName.trim().toLowerCase();
-    const matchesSearch = (r: LoanRecipient) =>
-      searchLower === '' || (r.full_name || '').toLowerCase().includes(searchLower);
-
-    const matchesStatus = (r: LoanRecipient) => {
-      if (recipientFilterStatus === 'all') return true;
-      return r.status === recipientFilterStatus;
-    };
-
-    const withinAmount = (r: LoanRecipient) => {
-      const amt = r.loan_amount ?? 0;
-      if (recipientFilterAmount === 'under_5k') return amt < 5000;
-      if (recipientFilterAmount === '5k_10k') return amt >= 5000 && amt <= 10000;
-      if (recipientFilterAmount === 'over_10k') return amt > 10000;
-      return true;
-    };
-
-    const uniOk = (r: LoanRecipient) =>
-      recipientFilterUniversity.trim() === '' || (r.university || '').trim() === recipientFilterUniversity.trim();
-
-    const assocOk = (r: LoanRecipient) =>
-      recipientFilterAssociation.trim() === '' || (r.association || '').trim() === recipientFilterAssociation.trim();
-
-    const base = loanRecipients.filter(
-      (r) => matchesSearch(r) && matchesStatus(r) && withinAmount(r) && uniOk(r) && assocOk(r)
-    );
-
-    const byText = (a: string, b: string) => (a || '').localeCompare(b || '', undefined, { sensitivity: 'base' });
-
-    const sorted = [...base].sort((a, b) => {
-      let cmp = 0;
-      if (recipientSortBy === 'name_asc') cmp = byText(a.full_name, b.full_name);
-      else if (recipientSortBy === 'name_desc') cmp = byText(b.full_name, a.full_name);
-      else if (recipientSortBy === 'university') cmp = byText(a.university || '', b.university || '') || byText(a.full_name, b.full_name);
-      else if (recipientSortBy === 'association') cmp = byText(a.association || '', b.association || '') || byText(a.full_name, b.full_name);
-      else if (recipientSortBy === 'amount_asc') cmp = (a.loan_amount ?? 0) - (b.loan_amount ?? 0);
-      else if (recipientSortBy === 'amount_desc') cmp = (b.loan_amount ?? 0) - (a.loan_amount ?? 0);
-      return cmp !== 0 ? cmp : (a.id || '').localeCompare(b.id || '');
-    });
-
-    return sorted;
-  }, [
-    loanRecipients,
-    recipientSearchName,
-    recipientFilterStatus,
-    recipientFilterUniversity,
-    recipientFilterAssociation,
-    recipientFilterAmount,
-    recipientSortBy,
-  ]);
-
-  const recipientActiveFilterCount = useMemo(() => (
-    (recipientSearchName.trim() ? 1 : 0) +
-    (recipientFilterStatus !== 'all' ? 1 : 0) +
-    (recipientFilterAmount !== 'all' ? 1 : 0) +
-    (recipientFilterUniversity ? 1 : 0) +
-    (recipientFilterAssociation ? 1 : 0)
-  ), [recipientSearchName, recipientFilterStatus, recipientFilterAmount, recipientFilterUniversity, recipientFilterAssociation]);
-
 
   const fetchPendingEvents = async () => {
     try {
@@ -1216,145 +1129,6 @@ export function SuperAdminDashboard() {
                       >
                         Overall stats
                       </Button>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button variant="outline" className="ml-auto">
-                            <SlidersHorizontal className="w-4 h-4 mr-2" />
-                            Filtering &amp; sorting
-                            {recipientActiveFilterCount > 0 && (
-                              <span className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                                {recipientActiveFilterCount}
-                              </span>
-                            )}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-[320px]">
-                          <div className="space-y-4">
-                            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sort</div>
-                            <div className="space-y-1">
-                              <Label className="text-sm">Sort by</Label>
-                              <Select value={recipientSortBy} onValueChange={(v) => setRecipientSortBy(v as typeof recipientSortBy)}>
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select sort" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="name_asc">Name (A → Z)</SelectItem>
-                                  <SelectItem value="name_desc">Name (Z → A)</SelectItem>
-                                  <SelectItem value="amount_desc">Loan amount (High → Low)</SelectItem>
-                                  <SelectItem value="amount_asc">Loan amount (Low → High)</SelectItem>
-                                  <SelectItem value="university">University (A → Z)</SelectItem>
-                                  <SelectItem value="association">Association (A → Z)</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            <div className="border-t pt-4">
-                              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">Filters</div>
-                              <div className="space-y-3">
-                                <div className="space-y-1">
-                                  <Label className="text-sm">Search by name</Label>
-                                  <Input
-                                    placeholder="Type to search..."
-                                    value={recipientSearchName}
-                                    onChange={(e) => setRecipientSearchName(e.target.value)}
-                                    className="h-9"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-sm">Status</Label>
-                                  <Select value={recipientFilterStatus} onValueChange={(v) => setRecipientFilterStatus(v as typeof recipientFilterStatus)}>
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">All</SelectItem>
-                                      <SelectItem value="active">Active (repaying)</SelectItem>
-                                      <SelectItem value="completed">Completed</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-sm">Loan amount</Label>
-                                  <Select value={recipientFilterAmount} onValueChange={(v) => setRecipientFilterAmount(v as typeof recipientFilterAmount)}>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="All amounts" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">All</SelectItem>
-                                      <SelectItem value="under_5k">Under RM 5,000</SelectItem>
-                                      <SelectItem value="5k_10k">RM 5,000 – RM 10,000</SelectItem>
-                                      <SelectItem value="over_10k">Over RM 10,000</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-sm">University</Label>
-                                  <Select
-                                    value={recipientFilterUniversity || 'all'}
-                                    onValueChange={(v) => setRecipientFilterUniversity(v === 'all' ? '' : v)}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="All universities" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">All</SelectItem>
-                                      {recipientUniversities.length === 0 ? (
-                                        <SelectItem value="_none" disabled>No data</SelectItem>
-                                      ) : (
-                                        recipientUniversities.map((u) => (
-                                          <SelectItem key={u} value={u}>{u}</SelectItem>
-                                        ))
-                                      )}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <div className="space-y-1">
-                                  <Label className="text-sm">Association</Label>
-                                  <Select
-                                    value={recipientFilterAssociation || 'all'}
-                                    onValueChange={(v) => setRecipientFilterAssociation(v === 'all' ? '' : v)}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="All associations" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="all">All</SelectItem>
-                                      {recipientAssociations.length === 0 ? (
-                                        <SelectItem value="_none" disabled>No data</SelectItem>
-                                      ) : (
-                                        recipientAssociations.map((a) => (
-                                          <SelectItem key={a} value={a}>{a}</SelectItem>
-                                        ))
-                                      )}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between border-t pt-4">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setRecipientSearchName('');
-                                  setRecipientFilterStatus('all');
-                                  setRecipientFilterUniversity('');
-                                  setRecipientFilterAssociation('');
-                                  setRecipientFilterAmount('all');
-                                  setRecipientSortBy('name_asc');
-                                }}
-                              >
-                                Reset all
-                              </Button>
-                              <span className="text-xs text-muted-foreground">
-                                Showing {filteredSortedRecipients.length} of {loanRecipients.length}
-                              </span>
-                            </div>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
                     </div>
                   </div>
                 </div>
@@ -1368,7 +1142,7 @@ export function SuperAdminDashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {filteredSortedRecipients.map((r) => {
+                    {loanRecipients.map((r) => {
                       const remaining = Math.max(0, r.loan_amount - r.total_paid);
                       const progress = r.loan_amount > 0 ? (r.total_paid / r.loan_amount) * 100 : 0;
                       return (
@@ -2483,7 +2257,76 @@ export function SuperAdminDashboard() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowNotificationDialog(false)}>Cancel</Button>
             <Button
+              variant="outline"
+              disabled={sendingNotificationNow}
               onClick={async () => {
+                if (sendingNotificationNow) return;
+                const now = Date.now();
+                // Extra guard: prevent accidental double-click spamming
+                if (now - lastSendNowAt < 8000) {
+                  alert('Please wait a few seconds before sending again.');
+                  return;
+                }
+                setSendingNotificationNow(true);
+                setLastSendNowAt(now);
+                // Send now: insert a due row and immediately invoke the Edge Function.
+                const scheduleAt = new Date().toISOString();
+                const id = `loan_${Date.now()}`;
+                try {
+                  if (!(isSupabaseConfigured() && supabase)) {
+                    alert('Supabase is not configured; Send now requires Supabase.');
+                    return;
+                  }
+
+                  const { error } = await supabase.from('scheduled_notifications').insert({
+                    id,
+                    target: notificationTarget,
+                    message: notificationMessage,
+                    schedule_at: scheduleAt,
+                    created_at: new Date().toISOString(),
+                  });
+                  if (error) {
+                    alert('Failed to save to Supabase: ' + (error.message || 'Unknown error'));
+                    return;
+                  }
+
+                  const serviceRoleKey = (import.meta as any).env?.VITE_SUPABASE_SERVICE_ROLE_KEY as string | undefined;
+                  const supabaseUrl = (import.meta as any).env?.VITE_SUPABASE_URL as string | undefined;
+                  if (!serviceRoleKey?.trim() || !supabaseUrl?.trim()) {
+                    alert('Missing VITE_SUPABASE_SERVICE_ROLE_KEY or VITE_SUPABASE_URL in .env (required for Send now).');
+                    return;
+                  }
+
+                  const res = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/process-scheduled-notifications`, {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      Authorization: `Bearer ${serviceRoleKey}`,
+                    },
+                    body: JSON.stringify({}),
+                  });
+                  const json = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    alert(`Edge Function failed (${res.status}): ${json?.error || 'Unknown error'}`);
+                    return;
+                  }
+
+                  alert(`Sent now. Processed: ${json?.processed ?? 0}`);
+                  setShowNotificationDialog(false);
+                } catch (e: any) {
+                  alert(e?.message || 'Failed to send now');
+                } finally {
+                  setSendingNotificationNow(false);
+                }
+              }}
+            >
+              {sendingNotificationNow ? 'Sending…' : 'Send now'}
+            </Button>
+            <Button
+              disabled={savingNotificationSchedule || sendingNotificationNow}
+              onClick={async () => {
+                if (savingNotificationSchedule) return;
+                setSavingNotificationSchedule(true);
                 // datetime-local returns local time without timezone. Convert to UTC ISO for timestamptz.
                 const scheduleAt = notificationSchedule
                   ? new Date(notificationSchedule).toISOString()
@@ -2516,10 +2359,12 @@ export function SuperAdminDashboard() {
                   setShowNotificationDialog(false);
                 } catch (e: any) {
                   alert(e?.message || 'Failed to save notification schedule');
+                } finally {
+                  setSavingNotificationSchedule(false);
                 }
               }}
             >
-              Save schedule
+              {savingNotificationSchedule ? 'Saving…' : 'Save schedule'}
             </Button>
           </DialogFooter>
         </DialogContent>
