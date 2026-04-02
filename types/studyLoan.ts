@@ -38,6 +38,8 @@ export const STUDY_LOAN_BUCKET = 'study-loan-documents';
 export interface LoanRecipient {
   id: string;
   full_name: string;
+  /** Optional Chinese name (中文) */
+  full_name_chinese?: string | null;
   email: string;
   phone_number: string;
   association: string;

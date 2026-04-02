@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { ArrowLeft, CreditCard, DollarSign, CheckCircle2, Camera, FileText, Loader2 } from 'lucide-react';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
+import { formatMalaysiaMobileDash, isValidMalaysiaMobileDash } from '../lib/malaysiaPhone';
 //import { checkPaymentDeadlines, isPaymentOverdue } from '../DeadlineSimulator';
 
 export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied?: () => void }) {
@@ -66,10 +67,12 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
     switch (loanType) {
       case 'degree':
         return 4000;
-      case 'tvet':
+      case 'tvet_vocational':
         return 4000;
-      case 'master_phd':
-        return 5000;
+      case 'master':
+        return 6000;
+      case 'phd':
+        return 6000;
       default:
         return 0;
     }
@@ -85,13 +88,7 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
 
   const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
-  const isValidPhone = (value: string) => {
-    const raw = value.replace(/[\s-]/g, '');
-    if (!raw) return false;
-    if (!/^\+?60?\d{9,11}$/.test(raw)) return false;
-    if (/^(\d)\1{5,}$/.test(raw.replace(/^\+?60/, ''))) return false;
-    return true;
-  };
+  const isValidPhone = (value: string) => isValidMalaysiaMobileDash(value);
 
   const areDatesValid = (admission: string, graduation: string) => {
     if (!admission || !graduation) return false;
@@ -124,7 +121,12 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
       return;
     }
     if (!isValidPhone(formData.phoneNumber)) {
-      setValidationError('Please enter a valid phone number (e.g. 012-3456789 or +60...).');
+      setValidationError('Phone number must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
+      setSubmitting(false);
+      return;
+    }
+    if (!isValidPhone(formData.guarantorPhoneNumber)) {
+      setValidationError('Guarantor phone must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
       setSubmitting(false);
       return;
     }
@@ -230,8 +232,12 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
       case 3:
         return formData.icFront !== null && formData.icBack !== null;
       case 4:
-        return formData.guarantorIcFront !== null && formData.guarantorIcBack !== null &&
-          formData.guarantorRelationship !== '' && formData.guarantorPhoneNumber !== '';
+        return (
+          formData.guarantorIcFront !== null &&
+          formData.guarantorIcBack !== null &&
+          formData.guarantorRelationship !== '' &&
+          isValidMalaysiaMobileDash(formData.guarantorPhoneNumber)
+        );
       case 5:
         return formData.loanType !== '';
       default:
@@ -259,8 +265,9 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
 
   const loanTypes = [
     { value: 'degree', label: 'Degree (学士)', amount: 'RM 4,000' },
-    { value: 'tvet', label: 'TVET (技职教育)', amount: 'RM 4,000' },
-    { value: 'master_phd', label: 'Master/PhD (硕士/博士)', amount: 'RM 5,000' },
+    { value: 'tvet_vocational', label: 'TVET / Vocational (技职教育)', amount: 'RM 4,000' },
+    { value: 'master', label: 'Master (硕士)', amount: 'RM 6,000 (first 2 years)' },
+    { value: 'phd', label: 'PhD (博士)', amount: 'RM 6,000 (first 2 years)' },
   ];
 
   return (
@@ -320,17 +327,24 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
                     <ul className="space-y-2 text-sm text-gray-700">
                       <li className="flex items-start gap-2">
                         <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
-                        <span><strong>Degree Programs:</strong> Up to RM 4,000</span>
+                        <span><strong>Degree Programs:</strong> RM 4,000 (till graduate)</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
-                        <span><strong>TVET Programs:</strong> Up to RM 4,000</span>
+                        <span><strong>TVET / Vocational Programs:</strong> RM 4,000 (till graduate)</span>
                       </li>
                       <li className="flex items-start gap-2">
                         <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
-                        <span><strong>Master/PhD Programs:</strong> Up to RM 5,000</span>
+                        <span><strong>Master Programs:</strong> RM 6,000 (first 2 years)</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5" />
+                        <span><strong>PhD Programs:</strong> RM 6,000 (first 2 years)</span>
                       </li>
                     </ul>
+                  </div>
+                  <div className="rounded-md border border-blue-200 bg-blue-100/40 p-3 text-sm text-blue-900">
+                    Starting July 2025, the association raised loan amounts: Degree and TVET/Vocational from RM 3,000 to RM 4,000, and Master/PhD from RM 5,000 to RM 6,000.
                   </div>
                   <div className="space-y-2 mt-4">
                     <h4 className="font-semibold text-blue-900">Key Features:</h4>
@@ -518,8 +532,10 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
                     <Label>Phone Number *</Label>
                     <Input
                       value={formData.phoneNumber}
-                      onChange={(e) => handleInputChange('phoneNumber', e.target.value)}
-                      placeholder="012-345-6789"
+                      onChange={(e) => handleInputChange('phoneNumber', formatMalaysiaMobileDash(e.target.value))}
+                      placeholder="011-1234567"
+                      inputMode="numeric"
+                      autoComplete="tel"
                     />
                   </div>
                   <div className="space-y-2">
@@ -680,8 +696,12 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
                     <Label>Guarantor Phone Number *</Label>
                     <Input
                       value={formData.guarantorPhoneNumber}
-                      onChange={(e) => handleInputChange('guarantorPhoneNumber', e.target.value)}
-                      placeholder="012-345-6789"
+                      onChange={(e) =>
+                        handleInputChange('guarantorPhoneNumber', formatMalaysiaMobileDash(e.target.value))
+                      }
+                      placeholder="011-1234567"
+                      inputMode="numeric"
+                      autoComplete="tel"
                     />
                   </div>
                   <div className="flex gap-2">

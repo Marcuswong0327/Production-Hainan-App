@@ -9,29 +9,15 @@ import type { LoanRecipient } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 // import { extractTextFromImage, isGeminiConfigured } from '../lib/gemini';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-
-const HAINAN_ASSOCIATIONS = [
-  'Selangor Hainan Association', 'Kuala Lumpur Hainan Association', 'Penang Hainan Association',
-  'Johor Hainan Association', 'Melaka Hainan Association', 'Negeri Sembilan Hainan Association',
-  'Perak Hainan Association', 'Kedah Hainan Association', 'Perlis Hainan Association',
-  'Kelantan Hainan Association', 'Terengganu Hainan Association', 'Pahang Hainan Association',
-  'Sabah Hainan Association', 'Sarawak Hainan Association',
-];
+import { formatMalaysiaMobileDash, isValidMalaysiaMobileDash } from '../lib/malaysiaPhone';
+import { GuarantorRelationshipSelect } from './GuarantorRelationshipSelect';
+import { AssociationSelect } from './AssociationSelect';
 
 const LOAN_TYPES = [
   { value: 'degree', label: 'Degree (学士)', amount: 4000 },
-  { value: 'tvet', label: 'TVET (技职教育)', amount: 4000 },
-  { value: 'master_phd', label: 'Master/PhD (硕士/博士)', amount: 5000 },
-];
-
-const GUARANTOR_RELATIONSHIPS = [
-  { value: 'dad', label: 'Dad (父亲)' },
-  { value: 'mom', label: 'Mom (母亲)' },
-  { value: 'uncle', label: 'Uncle (叔叔/舅舅)' },
-  { value: 'aunty', label: 'Aunty (阿姨/姑姑)' },
-  { value: 'brother', label: 'Brother (兄弟)' },
-  { value: 'sister', label: 'Sister (姐妹)' },
-  { value: 'other', label: 'Other (其他)' },
+  { value: 'tvet_vocational', label: 'TVET / Vocational (技职教育)', amount: 4000 },
+  { value: 'master', label: 'Master (硕士)', amount: 6000 },
+  { value: 'phd', label: 'PhD (博士)', amount: 6000 },
 ];
 
 interface AddLoanRecipientPageProps {
@@ -42,6 +28,7 @@ interface AddLoanRecipientPageProps {
 const initialForm = {
   association: '',
   full_name: '',
+  full_name_chinese: '',
   age: '',
   email: '',
   phone_number: '',
@@ -63,18 +50,16 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   // const [aiLoading, setAiLoading] = useState<string | null>(null);
   // Offer letter: file only
   const [offerLetterFile, setOfferLetterFile] = useState<File | null>(null);
-  // Optional IC files (can be saved to storage)
-  const [icFrontFile, setIcFrontFile] = useState<File | null>(null);
-  const [icBackFile, setIcBackFile] = useState<File | null>(null);
-  const [guarantorIcFrontFile, setGuarantorIcFrontFile] = useState<File | null>(null);
-  const [guarantorIcBackFile, setGuarantorIcBackFile] = useState<File | null>(null);
+  // Combined IC files (single upload each, can be PDF with front+back)
+  const [studentIcFile, setStudentIcFile] = useState<File | null>(null);
+  const [guarantorIcFile, setGuarantorIcFile] = useState<File | null>(null);
   // AI-extracted text preview (read-only; admin copies from here)
   // const [icFrontPreview, setIcFrontPreview] = useState('');
   // const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
 
   const update = (key: string, value: string) => setForm(f => ({ ...f, [key]: value }));
 
-  const loanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? form.loan_amount) : (form.loan_amount ? parseInt(form.loan_amount, 10) : 0);
+  const loanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? 0) : 0;
   // /** Photo+AI: pick file → extract text (preview) and optionally save file for upload (so no need to upload again). */
   // const handleAiExtract = async (
   //   setPreview: (t: string) => void,
@@ -103,13 +88,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
   const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
 
-  const isValidPhone = (value: string) => {
-    const raw = value.replace(/[\s-]/g, '');
-    if (!raw) return false;
-    if (!/^\+?60?\d{9,11}$/.test(raw)) return false;
-    if (/^(\d)\1{5,}$/.test(raw.replace(/^\+?60/, ''))) return false;
-    return true;
-  };
+  const isValidPhone = (value: string) => isValidMalaysiaMobileDash(value);
 
   const areDatesValid = (admission: string, graduation: string) => {
     if (!admission || !graduation) return false;
@@ -125,10 +104,15 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   };
 
   const handleSubmit = async () => {
-    const amount = form.loan_amount ? parseInt(form.loan_amount, 10) : loanAmount;
+    const amount = loanAmount;
+    const paidAmount = Math.max(0, parseInt(form.loan_amount || '0', 10) || 0);
     const ageNum = form.age ? parseInt(form.age, 10) : NaN;
-    if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.guarantor_relationship || !form.guarantor_phone_number.trim() || !form.loan_type || !amount || amount <= 0) {
+    if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.guarantor_relationship?.trim() || !form.guarantor_phone_number.trim() || !form.loan_type || !amount || amount <= 0) {
       alert('Please fill all required fields (association, name, email, phone, university, courses, guarantor, loan type/amount).');
+      return;
+    }
+    if (paidAmount > amount) {
+      alert('Paid amount cannot be more than the loan amount.');
       return;
     }
     if (form.age && (Number.isNaN(ageNum) || ageNum < 17 || ageNum > 65)) {
@@ -140,15 +124,15 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       return;
     }
     if (!isValidPhone(form.phone_number) || !isValidPhone(form.guarantor_phone_number)) {
-      alert('Please enter valid phone numbers (student and guarantor).');
+      alert('Phone numbers must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
       return;
     }
     if (form.admission_date && form.expected_graduation_date && !areDatesValid(form.admission_date, form.expected_graduation_date)) {
       alert('Admission date must be before graduation date, with course length between 1 and 8 years.');
       return;
     }
-    if (!guarantorIcFrontFile || !guarantorIcBackFile) {
-      alert('Guarantor IC front and back are required. Please upload both files.');
+    if (!guarantorIcFile) {
+      alert('Guarantor IC document is required. Please upload the file.');
       return;
     }
     setSubmitting(true);
@@ -172,15 +156,19 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
           return path;
         };
         offer_letter_path = await upload(offerLetterFile, 'offer_letter');
-        ic_front_path = await upload(icFrontFile, 'ic_front');
-        ic_back_path = await upload(icBackFile, 'ic_back');
-        guarantor_ic_front_path = await upload(guarantorIcFrontFile, 'guarantor_ic_front');
-        guarantor_ic_back_path = await upload(guarantorIcBackFile, 'guarantor_ic_back');
+        const studentIcPath = await upload(studentIcFile, 'student_ic');
+        const guarantorIcPath = await upload(guarantorIcFile, 'guarantor_ic');
+        // Keep compatibility with existing columns by storing the same file in front/back fields.
+        ic_front_path = studentIcPath;
+        ic_back_path = studentIcPath;
+        guarantor_ic_front_path = guarantorIcPath;
+        guarantor_ic_back_path = guarantorIcPath;
       }
 
       const recipient: LoanRecipient = {
         id,
         full_name: form.full_name.trim(),
+        full_name_chinese: form.full_name_chinese.trim() || null,
         email: form.email.trim(),
         phone_number: form.phone_number.trim(),
         association: form.association,
@@ -190,10 +178,10 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
         expected_graduation_date: form.expected_graduation_date || '',
         loan_type: form.loan_type,
         loan_amount: amount,
-        total_paid: 0,
+        total_paid: paidAmount,
         payments_made: 0,
-        status: 'active',
-        guarantor_relationship: form.guarantor_relationship,
+        status: paidAmount >= amount ? 'completed' : 'active',
+        guarantor_relationship: form.guarantor_relationship.trim(),
         guarantor_phone_number: form.guarantor_phone_number.trim(),
         offer_letter_path: offer_letter_path || null,
         ic_front_path: ic_front_path || null,
@@ -251,20 +239,22 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
           <CardContent className="space-y-6">
             {step === 1 && (
               <>
-                <div className="space-y-2">
-                  <Label>Association *</Label>
-                  <Select value={form.association} onValueChange={(v) => update('association', v)}>
-                    <SelectTrigger><SelectValue placeholder="Select association" /></SelectTrigger>
-                    <SelectContent>
-                      {HAINAN_ASSOCIATIONS.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <AssociationSelect
+                  id="student-association"
+                  value={form.association}
+                  onChange={(v) => update('association', v)}
+                />
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Full name *</Label>
+                    <Label>Full name (English) *</Label>
                     <Input value={form.full_name} onChange={(e) => update('full_name', e.target.value)} placeholder="Student full name" />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Chinese name (中文)</Label>
+                    <Input value={form.full_name_chinese} onChange={(e) => update('full_name_chinese', e.target.value)} placeholder="中文姓名" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Age</Label>
                     <Input type="number" value={form.age} onChange={(e) => update('age', e.target.value)} placeholder="Age" />
@@ -277,7 +267,13 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                   </div>
                   <div className="space-y-2">
                     <Label>Phone *</Label>
-                    <Input value={form.phone_number} onChange={(e) => update('phone_number', e.target.value)} placeholder="012-345-6789" />
+                    <Input
+                      value={form.phone_number}
+                      onChange={(e) => update('phone_number', formatMalaysiaMobileDash(e.target.value))}
+                      placeholder="011-1234567"
+                      inputMode="numeric"
+                      autoComplete="tel"
+                    />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -300,7 +296,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                 </div>
                 <div className="space-y-2">
                   <Label>Loan type *</Label>
-                  <Select value={form.loan_type} onValueChange={(v) => { update('loan_type', v); const a = LOAN_TYPES.find(t => t.value === v)?.amount; if (a) update('loan_amount', String(a)); }}>
+                  <Select value={form.loan_type} onValueChange={(v) => update('loan_type', v)}>
                     <SelectTrigger><SelectValue placeholder="Select loan type" /></SelectTrigger>
                     <SelectContent>
                       {LOAN_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label} – RM {t.amount.toLocaleString()}</SelectItem>)}
@@ -308,8 +304,8 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Loan amount (RM) *</Label>
-                  <Input type="number" min="1" value={form.loan_amount} onChange={(e) => update('loan_amount', e.target.value)} placeholder="e.g. 4000" />
+                  <Label>Paid Amount (RM)</Label>
+                  <Input type="number" min="0" value={form.loan_amount} onChange={(e) => update('loan_amount', e.target.value)} placeholder="e.g. 0 or 500" />
                 </div>
               </>
             )}
@@ -336,30 +332,18 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                   </div>
                 </div>
 
-                {/* Student IC front: upload documents (no AI) */}
                 <div className="space-y-2">
-                  <Label>Student IC (front)</Label>
+                  <Label>Student IC document (front + back in one file)</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,.pdf"
                       className="hidden"
-                      id="icFrontFile"
-                      onChange={(e) => setIcFrontFile(e.target.files?.[0] || null)}
+                      id="studentIcFile"
+                      onChange={(e) => setStudentIcFile(e.target.files?.[0] || null)}
                     />
-                    <label htmlFor="icFrontFile" className="cursor-pointer text-sm text-gray-600">
-                      {icFrontFile ? icFrontFile.name : 'Upload documents'}
-                    </label>
-                  </div>
-                </div>
-
-                {/* Student IC back: upload documents only */}
-                <div className="space-y-2">
-                  <Label>Student IC (back)</Label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                    <input type="file" accept="image/*" className="hidden" id="icBackFile" onChange={(e) => setIcBackFile(e.target.files?.[0] || null)} />
-                    <label htmlFor="icBackFile" className="cursor-pointer text-sm text-gray-600">
-                      {icBackFile ? icBackFile.name : 'Upload documents'}
+                    <label htmlFor="studentIcFile" className="cursor-pointer text-sm text-gray-600">
+                      {studentIcFile ? studentIcFile.name : 'Upload document'}
                     </label>
                   </div>
                 </div>
@@ -368,47 +352,34 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
             {step === 3 && (
               <>
+                <GuarantorRelationshipSelect
+                  id="guarantor-relationship"
+                  value={form.guarantor_relationship}
+                  onChange={(v) => update('guarantor_relationship', v)}
+                />
                 <div className="space-y-2">
-                  <Label>Guarantor relationship *</Label>
-                  <Select value={form.guarantor_relationship} onValueChange={(v) => update('guarantor_relationship', v)}>
-                    <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                    <SelectContent>
-                      {GUARANTOR_RELATIONSHIPS.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="guarantor-phone">Guarantor phone *</Label>
+                  <Input
+                    id="guarantor-phone"
+                    value={form.guarantor_phone_number}
+                    onChange={(e) => update('guarantor_phone_number', formatMalaysiaMobileDash(e.target.value))}
+                    placeholder="011-1234567"
+                    inputMode="numeric"
+                    autoComplete="tel"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label>Guarantor phone *</Label>
-                  <Input value={form.guarantor_phone_number} onChange={(e) => update('guarantor_phone_number', e.target.value)} placeholder="012-345-6789" />
-                </div>
-                {/* Guarantor IC: required front and back; upload documents only */}
-                <div className="space-y-2">
-                  <Label>Guarantor IC (front) *</Label>
+                  <Label>Guarantor IC document (front + back in one file) *</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,.pdf"
                       className="hidden"
-                      id="guarantorIcFront"
-                      onChange={(e) => setGuarantorIcFrontFile(e.target.files?.[0] || null)}
+                      id="guarantorIcFile"
+                      onChange={(e) => setGuarantorIcFile(e.target.files?.[0] || null)}
                     />
-                    <label htmlFor="guarantorIcFront" className="cursor-pointer text-sm text-gray-600">
-                      {guarantorIcFrontFile ? guarantorIcFrontFile.name : 'Upload documents'}
-                    </label>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Guarantor IC (back) *</Label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      id="guarantorIcBack"
-                      onChange={(e) => setGuarantorIcBackFile(e.target.files?.[0] || null)}
-                    />
-                    <label htmlFor="guarantorIcBack" className="cursor-pointer text-sm text-gray-600">
-                      {guarantorIcBackFile ? guarantorIcBackFile.name : 'Upload documents'}
+                    <label htmlFor="guarantorIcFile" className="cursor-pointer text-sm text-gray-600">
+                      {guarantorIcFile ? guarantorIcFile.name : 'Upload document'}
                     </label>
                   </div>
                 </div>

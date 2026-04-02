@@ -13,9 +13,11 @@ import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Ey
 import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { StudyLoanApplication, LoanRecipient } from '../types/studyLoan';
-import { STUDY_LOAN_BUCKET, MONTHLY_PAYMENTS } from '../types/studyLoan';
+import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 import { AddLoanRecipientPage } from './AddLoanRecipientPage';
 import { RecordLoanPaymentsPage } from './RecordLoanPaymentsPage';
+import { GuarantorRelationshipSelect } from './GuarantorRelationshipSelect';
+import { formatMalaysiaMobileDash } from '../lib/malaysiaPhone';
 
 
 interface Event {
@@ -68,6 +70,13 @@ interface WelfareApplication {
   recommendedBySubAssociation?: string;
   rejectionReason?: string;
 }
+
+const LOAN_TYPE_LABELS: Record<string, string> = {
+  degree: 'Degree',
+  tvet_vocational: 'TVET / Vocational',
+  master: 'Master',
+  phd: 'PhD',
+};
 
 export function SuperAdminDashboard() {
   const { signOut } = useAuth();
@@ -414,6 +423,7 @@ export function SuperAdminDashboard() {
       const { error } = await supabase.from('study_loan_recipients').insert({
         id: newRecipient.id,
         full_name: newRecipient.full_name,
+        full_name_chinese: newRecipient.full_name_chinese ?? null,
         email: newRecipient.email,
         phone_number: newRecipient.phone_number,
         association: newRecipient.association,
@@ -474,6 +484,7 @@ export function SuperAdminDashboard() {
       if (isSupabaseConfigured() && supabase) {
         const { error } = await supabase.from('study_loan_recipients').update({
           full_name: updated.full_name,
+          full_name_chinese: updated.full_name_chinese ?? null,
           email: updated.email,
           phone_number: updated.phone_number,
           association: updated.association,
@@ -1134,6 +1145,9 @@ export function SuperAdminDashboard() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                  Starting July 2025, study-loan amounts were revised: Degree and TVET/Vocational increased from RM 3,000 to RM 4,000, and Master/PhD increased from RM 5,000 to RM 6,000.
+                </div>
                 {loanRecipients.length === 0 ? (
                   <div className="text-center py-12 text-gray-500">
                     <DollarSign className="w-12 h-12 mx-auto mb-3 text-gray-400" />
@@ -1159,6 +1173,9 @@ export function SuperAdminDashboard() {
                                     {r.status}
                                   </Badge>
                                 </div>
+                                {r.full_name_chinese?.trim() ? (
+                                  <p className="text-sm text-gray-600">{r.full_name_chinese.trim()}</p>
+                                ) : null}
 
                                 {/* Mobile-first essential info */}
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
@@ -1166,17 +1183,18 @@ export function SuperAdminDashboard() {
                                   <span className="truncate max-w-[12rem] sm:max-w-none">{r.association}</span>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-2 text-sm">
+                                <div className="grid grid-cols-3 gap-2 text-sm">
                                   <div>
                                     <div className="text-xs text-gray-500">Loan</div>
                                     <div className="font-medium">RM {r.loan_amount.toLocaleString()}</div>
                                   </div>
                                   <div>
                                     <div className="text-xs text-gray-500">Paid</div>
-                                    <div className="font-medium">
-                                      RM {r.total_paid.toLocaleString()}
-                                      <span className="text-xs text-gray-500"> ({r.payments_made}/{MONTHLY_PAYMENTS})</span>
-                                    </div>
+                                    <div className="font-medium">RM {r.total_paid.toLocaleString()}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs text-gray-500">Remaining</div>
+                                    <div className="font-medium">RM {remaining.toLocaleString()}</div>
                                   </div>
                                 </div>
 
@@ -1186,15 +1204,13 @@ export function SuperAdminDashboard() {
                                       <div className="h-full bg-green-600 rounded-full" style={{ width: `${Math.min(100, progress)}%` }} />
                                     </div>
                                   </div>
-                                  <div className="text-sm font-medium whitespace-nowrap">
-                                    Remaining: RM {remaining.toLocaleString()}
-                                  </div>
+                                  <div className="text-sm font-medium whitespace-nowrap">{Math.round(progress)}%</div>
                                 </div>
 
                                 {/* Desktop-only: hide noisy info on phone */}
                                 <div className="hidden sm:grid grid-cols-4 gap-2 text-xs text-gray-500">
                                   <span className="truncate">Course: {r.courses || '-'}</span>
-                                  <span className="truncate">Type: {r.loan_type || '-'}</span>
+                                  <span className="truncate">Type: {LOAN_TYPE_LABELS[r.loan_type || ''] || r.loan_type || '-'}</span>
                                   <span className="truncate">Email: {r.email || '-'}</span>
                                   <span className="truncate">Phone: {r.phone_number || '-'}</span>
                                 </div>
@@ -1770,7 +1786,7 @@ export function SuperAdminDashboard() {
                 <div className="bg-gray-50 rounded-lg p-4">
                   <h3 className="font-semibold mb-2 text-gray-900">Loan</h3>
                   <div className="grid grid-cols-2 gap-2 text-sm text-gray-800">
-                    <div><strong>Type:</strong> {selectedStudyLoan.loan_type}</div>
+                    <div><strong>Type:</strong> {LOAN_TYPE_LABELS[selectedStudyLoan.loan_type || ''] || selectedStudyLoan.loan_type}</div>
                     <div><strong>Amount:</strong> RM {selectedStudyLoan.loan_amount?.toLocaleString()}</div>
                   </div>
                 </div>
@@ -1909,12 +1925,22 @@ export function SuperAdminDashboard() {
               <div className="space-y-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Full name</Label>
+                    <Label>Full name (English)</Label>
                     <Input
                       value={editRecipient.full_name}
                       onChange={(e) => setEditRecipient({ ...editRecipient, full_name: e.target.value })}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Chinese name (中文)</Label>
+                    <Input
+                      value={editRecipient.full_name_chinese || ''}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, full_name_chinese: e.target.value })}
+                      placeholder="中文姓名"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Email</Label>
                     <Input
@@ -1923,15 +1949,20 @@ export function SuperAdminDashboard() {
                       onChange={(e) => setEditRecipient({ ...editRecipient, email: e.target.value })}
                     />
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Phone</Label>
                     <Input
                       value={editRecipient.phone_number}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, phone_number: e.target.value })}
+                      onChange={(e) =>
+                        setEditRecipient({ ...editRecipient, phone_number: formatMalaysiaMobileDash(e.target.value) })
+                      }
+                      placeholder="011-1234567"
+                      inputMode="numeric"
+                      autoComplete="tel"
                     />
                   </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Association</Label>
                     <Input
@@ -1939,8 +1970,6 @@ export function SuperAdminDashboard() {
                       onChange={(e) => setEditRecipient({ ...editRecipient, association: e.target.value })}
                     />
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>University</Label>
                     <Input
@@ -1948,13 +1977,13 @@ export function SuperAdminDashboard() {
                       onChange={(e) => setEditRecipient({ ...editRecipient, university: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Courses</Label>
-                    <Input
-                      value={editRecipient.courses}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, courses: e.target.value })}
-                    />
-                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Courses</Label>
+                  <Input
+                    value={editRecipient.courses}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, courses: e.target.value })}
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -1974,7 +2003,7 @@ export function SuperAdminDashboard() {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Loan amount (RM)</Label>
                     <Input
@@ -1993,29 +2022,27 @@ export function SuperAdminDashboard() {
                       onChange={(e) => setEditRecipient({ ...editRecipient, total_paid: parseInt(e.target.value || '0', 10) })}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Payments made</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={editRecipient.payments_made}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, payments_made: parseInt(e.target.value || '0', 10) })}
-                    />
-                  </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
+                  <GuarantorRelationshipSelect
+                    id="edit-guarantor-relationship"
+                    value={editRecipient.guarantor_relationship || ''}
+                    onChange={(v) => setEditRecipient({ ...editRecipient, guarantor_relationship: v })}
+                  />
                   <div className="space-y-2">
-                    <Label>Guarantor relationship</Label>
+                    <Label htmlFor="edit-guarantor-phone">Guarantor phone</Label>
                     <Input
-                      value={editRecipient.guarantor_relationship || ''}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_relationship: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Guarantor phone</Label>
-                    <Input
+                      id="edit-guarantor-phone"
                       value={editRecipient.guarantor_phone_number || ''}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_phone_number: e.target.value })}
+                      onChange={(e) =>
+                        setEditRecipient({
+                          ...editRecipient,
+                          guarantor_phone_number: formatMalaysiaMobileDash(e.target.value),
+                        })
+                      }
+                      placeholder="011-1234567"
+                      inputMode="numeric"
+                      autoComplete="tel"
                     />
                   </div>
                 </div>

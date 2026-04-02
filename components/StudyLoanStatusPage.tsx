@@ -11,6 +11,10 @@ const MONTHLY_PAYMENTS = 20;
 
 const loanTypeLabels: Record<string, string> = {
   degree: 'Degree (学士)',
+  tvet_vocational: 'TVET / Vocational (技职教育)',
+  master: 'Master (硕士)',
+  phd: 'PhD (博士)',
+  // Backward compatibility for existing rows.
   tvet: 'TVET (技职教育)',
   master_phd: 'Master/PhD (硕士/博士)',
 };
