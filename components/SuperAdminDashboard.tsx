@@ -16,6 +16,7 @@ import type { StudyLoanApplication, LoanRecipient } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 import { AddLoanRecipientPage } from './AddLoanRecipientPage';
 import { RecordLoanPaymentsPage } from './RecordLoanPaymentsPage';
+import { LoanRecipientsStatsPage } from './LoanRecipientsStatsPage';
 import { GuarantorRelationshipSelect } from './GuarantorRelationshipSelect';
 import { formatMalaysiaMobileDash } from '../lib/malaysiaPhone';
 
@@ -862,6 +863,18 @@ export function SuperAdminDashboard() {
         }}
         onTotalsUpdated={(updated) => {
           setLoanRecipients((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+        }}
+      />
+    );
+  }
+
+  if (showLoanStats) {
+    return (
+      <LoanRecipientsStatsPage
+        recipients={loanRecipients}
+        onBack={() => {
+          setShowLoanStats(false);
+          setActiveTab('recipients');
         }}
       />
     );
@@ -2175,63 +2188,6 @@ export function SuperAdminDashboard() {
               </DialogFooter>
             </>
           )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Loan stats dialog */}
-      <Dialog open={showLoanStats} onOpenChange={(open) => { setShowLoanStats(open); if (open) setActiveTab('recipients'); }}>
-        <DialogContent className="bg-white text-gray-900">
-          <DialogHeader>
-            <DialogTitle>Loan portfolio overview</DialogTitle>
-            <DialogDescription>
-              Summary of total loaned out and collected across all recipients.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            {loanRecipients.length === 0 ? (
-              <p className="text-sm text-gray-500">No recipients yet.</p>
-            ) : (
-              (() => {
-                const totalLoaned = loanRecipients.reduce((sum, r) => sum + r.loan_amount, 0);
-                const totalCollected = loanRecipients.reduce((sum, r) => sum + r.total_paid, 0);
-                const outstanding = Math.max(0, totalLoaned - totalCollected);
-                const collectedPct = totalLoaned > 0 ? (totalCollected / totalLoaned) * 100 : 0;
-                return (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                      <div className="border rounded-lg p-3 bg-blue-50">
-                        <p className="text-xs text-gray-500">Total loaned out</p>
-                        <p className="text-lg font-semibold text-blue-700">RM {totalLoaned.toLocaleString()}</p>
-                      </div>
-                      <div className="border rounded-lg p-3 bg-green-50">
-                        <p className="text-xs text-gray-500">Total collected</p>
-                        <p className="text-lg font-semibold text-green-700">RM {totalCollected.toLocaleString()}</p>
-                      </div>
-                      <div className="border rounded-lg p-3 bg-amber-50">
-                        <p className="text-xs text-gray-500">Outstanding</p>
-                        <p className="text-lg font-semibold text-amber-700">RM {outstanding.toLocaleString()}</p>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-xs text-gray-600">
-                        <span>Collected vs loaned</span>
-                        <span>{Math.round(collectedPct)}%</span>
-                      </div>
-                      <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-green-600 rounded-full"
-                          style={{ width: `${Math.min(100, collectedPct)}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowLoanStats(false)}>Close</Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 
