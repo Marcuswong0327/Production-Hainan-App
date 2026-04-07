@@ -10,7 +10,6 @@ import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 // import { extractTextFromImage, isGeminiConfigured } from '../lib/gemini';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { formatMalaysiaMobileDash, isValidMalaysiaMobileDash } from '../lib/malaysiaPhone';
-import { GuarantorRelationshipSelect } from './GuarantorRelationshipSelect';
 import { AssociationSelect } from './AssociationSelect';
 
 const LOAN_TYPES = [
@@ -38,8 +37,7 @@ const initialForm = {
   expected_graduation_date: '',
   loan_type: '',
   loan_amount: '',
-  guarantor_relationship: '',
-  guarantor_phone_number: '',
+  association_chairman: '',
   notes: '',
 };
 
@@ -52,7 +50,6 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   const [offerLetterFile, setOfferLetterFile] = useState<File | null>(null);
   // Combined IC files (single upload each, can be PDF with front+back)
   const [studentIcFile, setStudentIcFile] = useState<File | null>(null);
-  const [guarantorIcFile, setGuarantorIcFile] = useState<File | null>(null);
   // AI-extracted text preview (read-only; admin copies from here)
   // const [icFrontPreview, setIcFrontPreview] = useState('');
   // const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
@@ -107,8 +104,8 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
     const amount = loanAmount;
     const paidAmount = Math.max(0, parseInt(form.loan_amount || '0', 10) || 0);
     const ageNum = form.age ? parseInt(form.age, 10) : NaN;
-    if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.guarantor_relationship?.trim() || !form.guarantor_phone_number.trim() || !form.loan_type || !amount || amount <= 0) {
-      alert('Please fill all required fields (association, name, email, phone, university, courses, guarantor, loan type/amount).');
+    if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.association_chairman.trim() || !form.loan_type || !amount || amount <= 0) {
+      alert('Please fill all required fields (association, name, email, phone, university, courses, 属会主席, loan type/amount).');
       return;
     }
     if (paidAmount > amount) {
@@ -123,16 +120,12 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       alert('Please enter a valid email address.');
       return;
     }
-    if (!isValidPhone(form.phone_number) || !isValidPhone(form.guarantor_phone_number)) {
-      alert('Phone numbers must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
+    if (!isValidPhone(form.phone_number)) {
+      alert('Phone number must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
       return;
     }
     if (form.admission_date && form.expected_graduation_date && !areDatesValid(form.admission_date, form.expected_graduation_date)) {
       alert('Admission date must be before graduation date, with course length between 1 and 8 years.');
-      return;
-    }
-    if (!guarantorIcFile) {
-      alert('Guarantor IC document is required. Please upload the file.');
       return;
     }
     setSubmitting(true);
@@ -142,8 +135,6 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       let offer_letter_path: string | null = null;
       let ic_front_path: string | null = null;
       let ic_back_path: string | null = null;
-      let guarantor_ic_front_path: string | null = null;
-      let guarantor_ic_back_path: string | null = null;
 
       if (isSupabaseConfigured() && supabase) {
         const prefix = `recipients/${id}`;
@@ -157,12 +148,9 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
         };
         offer_letter_path = await upload(offerLetterFile, 'offer_letter');
         const studentIcPath = await upload(studentIcFile, 'student_ic');
-        const guarantorIcPath = await upload(guarantorIcFile, 'guarantor_ic');
         // Keep compatibility with existing columns by storing the same file in front/back fields.
         ic_front_path = studentIcPath;
         ic_back_path = studentIcPath;
-        guarantor_ic_front_path = guarantorIcPath;
-        guarantor_ic_back_path = guarantorIcPath;
       }
 
       const recipient: LoanRecipient = {
@@ -181,13 +169,13 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
         total_paid: paidAmount,
         payments_made: 0,
         status: paidAmount >= amount ? 'completed' : 'active',
-        guarantor_relationship: form.guarantor_relationship.trim(),
-        guarantor_phone_number: form.guarantor_phone_number.trim(),
+        guarantor_relationship: form.association_chairman.trim(),
+        guarantor_phone_number: '',
         offer_letter_path: offer_letter_path || null,
         ic_front_path: ic_front_path || null,
         ic_back_path: ic_back_path || null,
-        guarantor_ic_front_path: guarantor_ic_front_path || null,
-        guarantor_ic_back_path: guarantor_ic_back_path || null,
+        guarantor_ic_front_path: null,
+        guarantor_ic_back_path: null,
         ic_front_text: null,
         ic_back_text: null,
         guarantor_ic_text: null,
@@ -233,7 +221,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
             <CardTitle>
               {step === 1 && 'Student & loan info'}
               {step === 2 && 'Documents'}
-              {step === 3 && 'Guarantor & submit'}
+              {step === 3 && '属会主席 & submit'}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -352,36 +340,14 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
             {step === 3 && (
               <>
-                <GuarantorRelationshipSelect
-                  id="guarantor-relationship"
-                  value={form.guarantor_relationship}
-                  onChange={(v) => update('guarantor_relationship', v)}
-                />
                 <div className="space-y-2">
-                  <Label htmlFor="guarantor-phone">Guarantor phone *</Label>
+                  <Label htmlFor="association-chairman">属会主席 *</Label>
                   <Input
-                    id="guarantor-phone"
-                    value={form.guarantor_phone_number}
-                    onChange={(e) => update('guarantor_phone_number', formatMalaysiaMobileDash(e.target.value))}
-                    placeholder="011-1234567"
-                    inputMode="numeric"
-                    autoComplete="tel"
+                    id="association-chairman"
+                    value={form.association_chairman}
+                    onChange={(e) => update('association_chairman', e.target.value)}
+                    placeholder="请输入属会主席姓名"
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label>Guarantor IC document (front + back in one file) *</Label>
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      id="guarantorIcFile"
-                      onChange={(e) => setGuarantorIcFile(e.target.files?.[0] || null)}
-                    />
-                    <label htmlFor="guarantorIcFile" className="cursor-pointer text-sm text-gray-600">
-                      {guarantorIcFile ? guarantorIcFile.name : 'Upload document'}
-                    </label>
-                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label>Notes (optional)</Label>
