@@ -19,6 +19,7 @@ import { RecordLoanPaymentsPage } from './RecordLoanPaymentsPage';
 import { LoanRecipientsStatsPage } from './LoanRecipientsStatsPage';
 import { GuarantorRelationshipSelect } from './GuarantorRelationshipSelect';
 import { formatMalaysiaMobileDash } from '../lib/malaysiaPhone';
+import { parseGuarantorPayload } from '../lib/guarantorRecipientPayload';
 
 
 interface Event {
@@ -2074,13 +2075,41 @@ export function SuperAdminDashboard() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">Guarantor IC information</Label>
-                      <Textarea
-                        rows={3}
-                        placeholder="Guarantor IC number / details"
-                        value={editRecipient.guarantor_ic_text || ''}
-                        onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_ic_text: e.target.value })}
-                      />
+                      <Label className="text-xs">担保人资料（JSON / 手动编辑）</Label>
+                      {(() => {
+                        const p = parseGuarantorPayload(editRecipient.guarantor_ic_text);
+                        return (
+                          <>
+                            {p && (
+                              <div className="rounded border border-gray-200 bg-white p-3 text-xs text-gray-800 space-y-3 mb-2">
+                                <div>
+                                  <p className="font-semibold text-gray-900">担保人（一）属会主席</p>
+                                  <p>姓名（中文）：{p.g1.name_zh}</p>
+                                  <p>姓名（英文）：{p.g1.name_en}</p>
+                                  <p>身份证号码：{p.g1.ic}</p>
+                                  <p>地址：{p.g1.address}</p>
+                                  <p>日期：{p.g1.date}</p>
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-gray-900">担保人（二）家属亲人</p>
+                                  <p>姓名（中文）：{p.g2.name_zh}</p>
+                                  <p>姓名（英文）：{p.g2.name_en}</p>
+                                  <p>年龄：{p.g2.age}</p>
+                                  <p>身份证号码：{p.g2.ic}</p>
+                                  <p>地址：{p.g2.address}</p>
+                                  <p>日期：{p.g2.date}</p>
+                                </div>
+                              </div>
+                            )}
+                            <Textarea
+                              rows={3}
+                              placeholder="Guarantor details (structured JSON when added via Add student)"
+                              value={editRecipient.guarantor_ic_text || ''}
+                              onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_ic_text: e.target.value })}
+                            />
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -2119,9 +2148,9 @@ export function SuperAdminDashboard() {
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => openStudyLoanDocument(editRecipient.guarantor_ic_front_path || null, 'Guarantor IC front')}
+                        onClick={() => openStudyLoanDocument(editRecipient.guarantor_ic_front_path || null, '文件截图')}
                       >
-                        <ExternalLink className="w-3 h-3 mr-1" /> Guarantor IC front
+                        <ExternalLink className="w-3 h-3 mr-1" /> 文件截图
                       </Button>
                     )}
                     {editRecipient.guarantor_ic_back_path && (

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
+import { Textarea } from '../ui/textarea';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { ArrowLeft, FileText, Loader2 } from 'lucide-react';
@@ -11,6 +12,10 @@ import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { formatMalaysiaMobileDash, isValidMalaysiaMobileDash } from '../lib/malaysiaPhone';
 import { AssociationSelect } from './AssociationSelect';
+import {
+  stringifyGuarantorPayload,
+  type GuarantorRecipientPayloadV1,
+} from '../lib/guarantorRecipientPayload';
 
 const LOAN_TYPES = [
   { value: 'degree', label: 'Degree (学士)', amount: 4000 },
@@ -37,7 +42,17 @@ const initialForm = {
   expected_graduation_date: '',
   loan_type: '',
   loan_amount: '',
-  association_chairman: '',
+  g1_name_zh: '',
+  g1_name_en: '',
+  g1_ic: '',
+  g1_address: '',
+  g1_date: '',
+  g2_name_zh: '',
+  g2_name_en: '',
+  g2_ic: '',
+  g2_address: '',
+  g2_date: '',
+  g2_age: '',
   notes: '',
 };
 
@@ -50,6 +65,8 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   const [offerLetterFile, setOfferLetterFile] = useState<File | null>(null);
   // Combined IC files (single upload each, can be PDF with front+back)
   const [studentIcFile, setStudentIcFile] = useState<File | null>(null);
+  /** 文件截图 — png / pdf / jpg */
+  const [documentScreenshotFile, setDocumentScreenshotFile] = useState<File | null>(null);
   // AI-extracted text preview (read-only; admin copies from here)
   // const [icFrontPreview, setIcFrontPreview] = useState('');
   // const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
@@ -87,6 +104,12 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
   const isValidPhone = (value: string) => isValidMalaysiaMobileDash(value);
 
+  const isAllowedScreenshotFile = (f: File | null) => {
+    if (!f) return false;
+    const n = f.name.toLowerCase();
+    return n.endsWith('.pdf') || n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg');
+  };
+
   const areDatesValid = (admission: string, graduation: string) => {
     if (!admission || !graduation) return false;
     const start = new Date(admission);
@@ -104,9 +127,47 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
     const amount = loanAmount;
     const paidAmount = Math.max(0, parseInt(form.loan_amount || '0', 10) || 0);
     const ageNum = form.age ? parseInt(form.age, 10) : NaN;
-    if (!form.association || !form.full_name.trim() || !form.email.trim() || !form.phone_number.trim() || !form.university.trim() || !form.courses.trim() || !form.association_chairman.trim() || !form.loan_type || !amount || amount <= 0) {
-      alert('Please fill all required fields (association, name, email, phone, university, courses, 属会主席, loan type/amount).');
+    if (
+      !form.association ||
+      !form.full_name.trim() ||
+      !form.email.trim() ||
+      !form.phone_number.trim() ||
+      !form.university.trim() ||
+      !form.courses.trim() ||
+      !form.loan_type ||
+      !amount ||
+      amount <= 0
+    ) {
+      alert('Please fill all required fields (association, name, email, phone, university, courses, loan type/amount).');
       return;
+    }
+    const g1Ok =
+      form.g1_name_zh.trim() &&
+      form.g1_name_en.trim() &&
+      form.g1_ic.trim() &&
+      form.g1_address.trim() &&
+      form.g1_date;
+    const g2Ok =
+      form.g2_name_zh.trim() &&
+      form.g2_name_en.trim() &&
+      form.g2_ic.trim() &&
+      form.g2_address.trim() &&
+      form.g2_date &&
+      form.g2_age.trim();
+    if (!g1Ok || !g2Ok) {
+      alert('请填写担保人（一）及担保人（二）的全部必填栏位。');
+      return;
+    }
+    const g2AgeNum = parseInt(form.g2_age, 10);
+    if (Number.isNaN(g2AgeNum) || g2AgeNum < 1 || g2AgeNum > 65) {
+      alert('担保人（二）年龄须为 1–65 岁。');
+      return;
+    }
+    if (isSupabaseConfigured()) {
+      if (!documentScreenshotFile || !isAllowedScreenshotFile(documentScreenshotFile)) {
+        alert('请上传「文件截图」（PNG、PDF 或 JPG）。');
+        return;
+      }
     }
     if (paidAmount > amount) {
       alert('Paid amount cannot be more than the loan amount.');
@@ -135,6 +196,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       let offer_letter_path: string | null = null;
       let ic_front_path: string | null = null;
       let ic_back_path: string | null = null;
+      let guarantor_doc_path: string | null = null;
 
       if (isSupabaseConfigured() && supabase) {
         const prefix = `recipients/${id}`;
@@ -151,7 +213,27 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
         // Keep compatibility with existing columns by storing the same file in front/back fields.
         ic_front_path = studentIcPath;
         ic_back_path = studentIcPath;
+        guarantor_doc_path = await upload(documentScreenshotFile, 'document_screenshot');
       }
+
+      const payload: GuarantorRecipientPayloadV1 = {
+        version: 1,
+        g1: {
+          name_zh: form.g1_name_zh.trim(),
+          name_en: form.g1_name_en.trim(),
+          ic: form.g1_ic.trim(),
+          address: form.g1_address.trim(),
+          date: form.g1_date,
+        },
+        g2: {
+          name_zh: form.g2_name_zh.trim(),
+          name_en: form.g2_name_en.trim(),
+          ic: form.g2_ic.trim(),
+          address: form.g2_address.trim(),
+          date: form.g2_date,
+          age: parseInt(form.g2_age, 10),
+        },
+      };
 
       const recipient: LoanRecipient = {
         id,
@@ -169,16 +251,16 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
         total_paid: paidAmount,
         payments_made: 0,
         status: paidAmount >= amount ? 'completed' : 'active',
-        guarantor_relationship: form.association_chairman.trim(),
+        guarantor_relationship: `担保人（一）属会主席 · ${form.g1_name_zh.trim()}；担保人（二）家属亲人 · ${form.g2_name_zh.trim()}`,
         guarantor_phone_number: '',
         offer_letter_path: offer_letter_path || null,
         ic_front_path: ic_front_path || null,
         ic_back_path: ic_back_path || null,
-        guarantor_ic_front_path: null,
+        guarantor_ic_front_path: guarantor_doc_path,
         guarantor_ic_back_path: null,
         ic_front_text: null,
         ic_back_text: null,
-        guarantor_ic_text: null,
+        guarantor_ic_text: stringifyGuarantorPayload(payload),
         notes: form.notes.trim() || null,
         created_at: now,
         updated_at: now,
@@ -221,7 +303,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
             <CardTitle>
               {step === 1 && 'Student & loan info'}
               {step === 2 && 'Documents'}
-              {step === 3 && '属会主席 & submit'}
+              {step === 3 && 'Guarantors & submit'}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -340,15 +422,89 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
             {step === 3 && (
               <>
-                <div className="space-y-2">
-                  <Label htmlFor="association-chairman">属会主席 *</Label>
-                  <Input
-                    id="association-chairman"
-                    value={form.association_chairman}
-                    onChange={(e) => update('association_chairman', e.target.value)}
-                    placeholder="请输入属会主席姓名"
-                  />
+                <p className="text-sm text-gray-600">
+                  担保人（一）必须为属会主席；担保人（二）为家属亲人，年龄不超过 65 岁。
+                </p>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
+                  <h3 className="font-semibold text-gray-900">担保人（一）必须为属会主席</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="g1-name-zh">姓名（中文） *</Label>
+                      <Input id="g1-name-zh" value={form.g1_name_zh} onChange={(e) => update('g1_name_zh', e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="g1-name-en">姓名（英文） *</Label>
+                      <Input id="g1-name-en" value={form.g1_name_en} onChange={(e) => update('g1_name_en', e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g1-ic">身份证号码 *</Label>
+                    <Input id="g1-ic" value={form.g1_ic} onChange={(e) => update('g1_ic', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g1-address">地址 *</Label>
+                    <Textarea id="g1-address" rows={2} value={form.g1_address} onChange={(e) => update('g1_address', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g1-date">日期 *</Label>
+                    <Input id="g1-date" type="date" value={form.g1_date} onChange={(e) => update('g1_date', e.target.value)} />
+                  </div>
                 </div>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-4">
+                  <h3 className="font-semibold text-gray-900">担保人（二）家属亲人，年龄不超过 65 岁</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="g2-name-zh">姓名（中文） *</Label>
+                      <Input id="g2-name-zh" value={form.g2_name_zh} onChange={(e) => update('g2_name_zh', e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="g2-name-en">姓名（英文） *</Label>
+                      <Input id="g2-name-en" value={form.g2_name_en} onChange={(e) => update('g2_name_en', e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g2-age">年龄 *（1–65）</Label>
+                    <Input
+                      id="g2-age"
+                      type="number"
+                      min={1}
+                      max={65}
+                      value={form.g2_age}
+                      onChange={(e) => update('g2_age', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g2-ic">身份证号码 *</Label>
+                    <Input id="g2-ic" value={form.g2_ic} onChange={(e) => update('g2_ic', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g2-address">地址 *</Label>
+                    <Textarea id="g2-address" rows={2} value={form.g2_address} onChange={(e) => update('g2_address', e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="g2-date">日期 *</Label>
+                    <Input id="g2-date" type="date" value={form.g2_date} onChange={(e) => update('g2_date', e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="doc-screenshot">文件截图 *{isSupabaseConfigured() ? '' : '（启用 Supabase 后会上传）'}</Label>
+                  <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-4 text-center">
+                    <input
+                      type="file"
+                      accept=".png,.pdf,.jpg,.jpeg,image/png,image/jpeg,application/pdf"
+                      className="hidden"
+                      id="doc-screenshot"
+                      onChange={(e) => setDocumentScreenshotFile(e.target.files?.[0] || null)}
+                    />
+                    <label htmlFor="doc-screenshot" className="cursor-pointer text-sm text-gray-700">
+                      {documentScreenshotFile ? documentScreenshotFile.name : '上传 PNG、PDF 或 JPG'}
+                    </label>
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <Label>Notes (optional)</Label>
                   <Input value={form.notes} onChange={(e) => update('notes', e.target.value)} placeholder="Any notes" />
