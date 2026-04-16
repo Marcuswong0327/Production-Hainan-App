@@ -27,47 +27,61 @@ export interface StudyLoanApplication {
   rejection_reason: string | null;
   created_at: string;
   updated_at: string;
-  /** Repayment tracking (optional; add columns in Supabase if needed) */
   total_paid?: number;
   payments_made?: number;
 }
 
 export const STUDY_LOAN_BUCKET = 'study-loan-documents';
 
-/** Manually entered student who received a study loan (for repayment tracking and future notifications) */
+/** One row per student; linked from `study_loan_recipients.id` */
+export interface GuarantorRow {
+  id: string;
+  student_id: string;
+  guarantor_1_zh: string | null;
+  guarantor_1_en: string | null;
+  guarantor_1_ic: string | null;
+  guarantor_1_address: string | null;
+  guarantor_1_sign_date: string | null;
+  guarantor_2_zh: string | null;
+  guarantor_2_en: string | null;
+  guarantor_2_ic: string | null;
+  guarantor_2_address: string | null;
+  guarantor_2_sign_date: string | null;
+  guarantor_2_age: number | null;
+  guarantor_info_pic: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** Manually entered student who received a study loan (Super Admin “Add student”) */
 export interface LoanRecipient {
   id: string;
-  full_name: string;
-  /** Optional Chinese name (中文) */
-  full_name_chinese?: string | null;
+  full_name_en: string;
+  full_name_zh: string | null;
+  loan_type: string | null;
   email: string;
   phone_number: string;
   association: string;
   university: string;
-  courses: string;
-  admission_date?: string;
-  expected_graduation_date?: string;
-  loan_type?: string;
+  course: string;
+  admission_date: string;
+  expected_graduation_date: string;
   loan_amount: number;
   total_paid: number;
-  payments_made: number;
   status: 'active' | 'completed';
-  guarantor_relationship?: string;
-  guarantor_phone_number?: string;
-  /** Offer letter: file only (path after upload) */
-  offer_letter_path?: string | null;
-  /** Optional saved IC/document paths */
-  ic_front_path?: string | null;
-  ic_back_path?: string | null;
-  guarantor_ic_front_path?: string | null;
-  guarantor_ic_back_path?: string | null;
-  /** Key details pasted by admin (e.g. IC number) after copying from AI preview */
-  ic_front_text?: string | null;
-  ic_back_text?: string | null;
-  guarantor_ic_text?: string | null;
+  offer_letter_path: string | null;
+  student_ic_front_back_path: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
+  /** Joined from `guarantors` (one row per student); null if not yet created */
+  guarantor: GuarantorRow | null;
 }
+
+/** Row payload for insert/upsert into `guarantors` (no id/timestamps) */
+export type GuarantorInsert = Omit<GuarantorRow, 'id' | 'created_at' | 'updated_at'>;
+
+/** Recipient row without joined guarantor (used when saving from Add student) */
+export type LoanRecipientCore = Omit<LoanRecipient, 'guarantor'>;
 
 export const MONTHLY_PAYMENTS = 20;

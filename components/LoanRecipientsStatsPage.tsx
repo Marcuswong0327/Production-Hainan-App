@@ -66,7 +66,7 @@ function totalsFor(list: LoanRecipient[]) {
 }
 
 function sortRecipientsByName(list: LoanRecipient[]) {
-  return [...list].sort((a, b) => a.full_name.localeCompare(b.full_name, undefined, { sensitivity: 'base' }));
+  return [...list].sort((a, b) => a.full_name_en.localeCompare(b.full_name_en, undefined, { sensitivity: 'base' }));
 }
 
 function buildStudentListTsv(rows: LoanRecipient[], associationLabel: string) {
@@ -87,8 +87,8 @@ function buildStudentListTsv(rows: LoanRecipient[], associationLabel: string) {
     ...rows.map((r) =>
       [
         (r.association || '').trim() || '—',
-        r.full_name,
-        r.full_name_chinese?.trim() || '—',
+        r.full_name_en,
+        r.full_name_zh?.trim() || '—',
         r.email,
         r.phone_number,
         r.university,
@@ -353,8 +353,8 @@ export function LoanRecipientsStatsPage({ recipients, onBack }: LoanRecipientsSt
                       {filteredSorted.map((r, i) => (
                         <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/80">
                           <td className="py-2.5 pr-3 text-slate-500">{i + 1}</td>
-                          <td className="py-2.5 pr-3 font-medium text-slate-900">{r.full_name}</td>
-                          <td className="py-2.5 pr-3 text-slate-700">{r.full_name_chinese?.trim() || '—'}</td>
+                          <td className="py-2.5 pr-3 font-medium text-slate-900">{r.full_name_en}</td>
+                          <td className="py-2.5 pr-3 text-slate-700">{r.full_name_zh?.trim() || '—'}</td>
                           <td className="py-2.5 pr-3 text-slate-700 break-all max-w-[10rem]">{r.email}</td>
                           <td className="py-2.5 pr-3 text-slate-700 whitespace-nowrap">{r.phone_number}</td>
                           <td className="py-2.5 pr-3 text-slate-600 max-w-[12rem] truncate" title={r.university}>
@@ -542,8 +542,8 @@ export function LoanRecipientsStatsPage({ recipients, onBack }: LoanRecipientsSt
                               {list.map((r, i) => (
                                 <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/80">
                                   <td className="py-2 px-3 text-slate-500">{i + 1}</td>
-                                  <td className="py-2 px-3 font-medium text-slate-900">{r.full_name}</td>
-                                  <td className="py-2 px-3 text-slate-700">{r.full_name_chinese?.trim() || '—'}</td>
+                                  <td className="py-2 px-3 font-medium text-slate-900">{r.full_name_en}</td>
+                                  <td className="py-2 px-3 text-slate-700">{r.full_name_zh?.trim() || '—'}</td>
                                   <td className="py-2 px-3 text-slate-700 break-all max-w-[12rem]">{r.email}</td>
                                   <td className="py-2 px-3 text-slate-700 whitespace-nowrap">{r.phone_number}</td>
                                 </tr>

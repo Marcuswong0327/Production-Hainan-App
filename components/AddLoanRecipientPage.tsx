@@ -6,16 +6,11 @@ import { Textarea } from '../ui/textarea';
 import { Label } from '../ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { ArrowLeft, FileText, Loader2 } from 'lucide-react';
-import type { LoanRecipient } from '../types/studyLoan';
+import type { GuarantorInsert, LoanRecipientCore } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
-// import { extractTextFromImage, isGeminiConfigured } from '../lib/gemini';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { formatMalaysiaMobileDash, isValidMalaysiaMobileDash } from '../lib/malaysiaPhone';
 import { AssociationSelect } from './AssociationSelect';
-import {
-  stringifyGuarantorPayload,
-  type GuarantorRecipientPayloadV1,
-} from '../lib/guarantorRecipientPayload';
 
 const LOAN_TYPES = [
   { value: 'degree', label: 'Degree (学士)', amount: 4000 },
@@ -26,7 +21,7 @@ const LOAN_TYPES = [
 
 interface AddLoanRecipientPageProps {
   onBack: () => void;
-  onSubmit: (recipient: LoanRecipient) => Promise<void>;
+  onSubmit: (recipient: LoanRecipientCore, guarantor: GuarantorInsert) => Promise<void>;
 }
 
 const initialForm = {
@@ -60,48 +55,15 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(initialForm);
   const [submitting, setSubmitting] = useState(false);
-  // const [aiLoading, setAiLoading] = useState<string | null>(null);
-  // Offer letter: file only
   const [offerLetterFile, setOfferLetterFile] = useState<File | null>(null);
-  // Combined IC files (single upload each, can be PDF with front+back)
   const [studentIcFile, setStudentIcFile] = useState<File | null>(null);
-  /** 文件截图 — png / pdf / jpg */
   const [documentScreenshotFile, setDocumentScreenshotFile] = useState<File | null>(null);
-  // AI-extracted text preview (read-only; admin copies from here)
-  // const [icFrontPreview, setIcFrontPreview] = useState('');
-  // const [guarantorIcFrontPreview, setGuarantorIcFrontPreview] = useState('');
 
   const update = (key: string, value: string) => setForm(f => ({ ...f, [key]: value }));
 
   const loanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? 0) : 0;
-  // /** Photo+AI: pick file → extract text (preview) and optionally save file for upload (so no need to upload again). */
-  // const handleAiExtract = async (
-  //   setPreview: (t: string) => void,
-  //   prompt: string,
-  //   setFile?: (f: File | null) => void
-  // ) => {
-  //   const input = document.createElement('input');
-  //   input.type = 'file';
-  //   input.accept = 'image/*,.pdf';
-  //   input.onchange = async (e) => {
-  //     const file = (e.target as HTMLInputElement).files?.[0];
-  //     if (!file) return;
-  //     if (setFile) setFile(file);
-  //     setAiLoading('extract');
-  //     try {
-  //       const text = await extractTextFromImage(file, prompt);
-  //       setPreview(text);
-  //     } catch (err: any) {
-  //       alert(err?.message || 'AI extraction failed');
-  //     } finally {
-  //       setAiLoading(null);
-  //     }
-  //   };
-  //   input.click();
-  // };
 
   const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-
   const isValidPhone = (value: string) => isValidMalaysiaMobileDash(value);
 
   const isAllowedScreenshotFile = (f: File | null) => {
@@ -110,16 +72,17 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
     return n.endsWith('.pdf') || n.endsWith('.png') || n.endsWith('.jpg') || n.endsWith('.jpeg');
   };
 
-  const areDatesValid = (admission: string, graduation: string) => {
-    if (!admission || !graduation) return false;
-    const start = new Date(admission);
-    const end = new Date(graduation);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
-    if (start >= end) return false;
-    const diffMs = end.getTime() - start.getTime();
-    const yearMs = 365 * 24 * 60 * 60 * 1000;
-    if (diffMs < yearMs) return false;
-    if (diffMs > 8 * yearMs) return false;
+  const sanitizeYear = (raw: string) => raw.replace(/\D/g, '').slice(0, 4);
+
+  /** Admission / graduation stored as 4-digit year strings (e.g. "2024"). */
+  const areYearsValid = (admission: string, graduation: string) => {
+    const a = parseInt(admission, 10);
+    const g = parseInt(graduation, 10);
+    if (Number.isNaN(a) || Number.isNaN(g)) return false;
+    if (a < 1990 || a > 2100 || g < 1990 || g > 2100) return false;
+    if (a >= g) return false;
+    const years = g - a;
+    if (years < 1 || years > 8) return false;
     return true;
   };
 
@@ -138,7 +101,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       !amount ||
       amount <= 0
     ) {
-      alert('Please fill all required fields (association, name, email, phone, university, courses, loan type/amount).');
+      alert('Please fill all required fields (association, name, email, phone, university, course, loan type/amount).');
       return;
     }
     const g1Ok =
@@ -182,11 +145,15 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       return;
     }
     if (!isValidPhone(form.phone_number)) {
-      alert('Phone number must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
+      alert('Phone must be a Malaysian mobile: 01X-XXXXXXX or longer (11–12 digits), e.g. 011-12345678.');
       return;
     }
-    if (form.admission_date && form.expected_graduation_date && !areDatesValid(form.admission_date, form.expected_graduation_date)) {
-      alert('Admission date must be before graduation date, with course length between 1 and 8 years.');
+    if ((form.admission_date || form.expected_graduation_date) && (!form.admission_date || !form.expected_graduation_date)) {
+      alert('Please enter both admission year and expected graduation year, or leave both empty.');
+      return;
+    }
+    if (form.admission_date && form.expected_graduation_date && !areYearsValid(form.admission_date, form.expected_graduation_date)) {
+      alert('Admission year must be before graduation year; course length between 1 and 8 years (years only).');
       return;
     }
     setSubmitting(true);
@@ -194,9 +161,8 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       const id = crypto.randomUUID();
       const now = new Date().toISOString();
       let offer_letter_path: string | null = null;
-      let ic_front_path: string | null = null;
-      let ic_back_path: string | null = null;
-      let guarantor_doc_path: string | null = null;
+      let student_ic_front_back_path: string | null = null;
+      let guarantor_info_pic: string | null = null;
 
       if (isSupabaseConfigured() && supabase) {
         const prefix = `recipients/${id}`;
@@ -209,63 +175,49 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
           return path;
         };
         offer_letter_path = await upload(offerLetterFile, 'offer_letter');
-        const studentIcPath = await upload(studentIcFile, 'student_ic');
-        // Keep compatibility with existing columns by storing the same file in front/back fields.
-        ic_front_path = studentIcPath;
-        ic_back_path = studentIcPath;
-        guarantor_doc_path = await upload(documentScreenshotFile, 'document_screenshot');
+        student_ic_front_back_path = await upload(studentIcFile, 'student_ic');
+        guarantor_info_pic = await upload(documentScreenshotFile, 'guarantor_info_pic');
       }
 
-      const payload: GuarantorRecipientPayloadV1 = {
-        version: 1,
-        g1: {
-          name_zh: form.g1_name_zh.trim(),
-          name_en: form.g1_name_en.trim(),
-          ic: form.g1_ic.trim(),
-          address: form.g1_address.trim(),
-          date: form.g1_date,
-        },
-        g2: {
-          name_zh: form.g2_name_zh.trim(),
-          name_en: form.g2_name_en.trim(),
-          ic: form.g2_ic.trim(),
-          address: form.g2_address.trim(),
-          date: form.g2_date,
-          age: parseInt(form.g2_age, 10),
-        },
-      };
-
-      const recipient: LoanRecipient = {
+      const recipient: LoanRecipientCore = {
         id,
-        full_name: form.full_name.trim(),
-        full_name_chinese: form.full_name_chinese.trim() || null,
+        full_name_en: form.full_name.trim(),
+        full_name_zh: form.full_name_chinese.trim() || null,
+        loan_type: form.loan_type || null,
         email: form.email.trim(),
         phone_number: form.phone_number.trim(),
         association: form.association,
         university: form.university.trim(),
-        courses: form.courses.trim(),
+        course: form.courses.trim(),
         admission_date: form.admission_date || '',
         expected_graduation_date: form.expected_graduation_date || '',
-        loan_type: form.loan_type,
         loan_amount: amount,
         total_paid: paidAmount,
-        payments_made: 0,
         status: paidAmount >= amount ? 'completed' : 'active',
-        guarantor_relationship: `担保人（一）属会主席 · ${form.g1_name_zh.trim()}；担保人（二）家属亲人 · ${form.g2_name_zh.trim()}`,
-        guarantor_phone_number: '',
         offer_letter_path: offer_letter_path || null,
-        ic_front_path: ic_front_path || null,
-        ic_back_path: ic_back_path || null,
-        guarantor_ic_front_path: guarantor_doc_path,
-        guarantor_ic_back_path: null,
-        ic_front_text: null,
-        ic_back_text: null,
-        guarantor_ic_text: stringifyGuarantorPayload(payload),
+        student_ic_front_back_path: student_ic_front_back_path || null,
         notes: form.notes.trim() || null,
         created_at: now,
         updated_at: now,
       };
-      await onSubmit(recipient);
+
+      const guarantor: GuarantorInsert = {
+        student_id: id,
+        guarantor_1_zh: form.g1_name_zh.trim(),
+        guarantor_1_en: form.g1_name_en.trim(),
+        guarantor_1_ic: form.g1_ic.trim(),
+        guarantor_1_address: form.g1_address.trim(),
+        guarantor_1_sign_date: form.g1_date,
+        guarantor_2_zh: form.g2_name_zh.trim(),
+        guarantor_2_en: form.g2_name_en.trim(),
+        guarantor_2_ic: form.g2_ic.trim(),
+        guarantor_2_address: form.g2_address.trim(),
+        guarantor_2_sign_date: form.g2_date,
+        guarantor_2_age: g2AgeNum,
+        guarantor_info_pic: guarantor_info_pic || null,
+      };
+
+      await onSubmit(recipient, guarantor);
       onBack();
     } catch (err: any) {
       alert(err?.message || 'Failed to add student');
@@ -340,7 +292,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                     <Input
                       value={form.phone_number}
                       onChange={(e) => update('phone_number', formatMalaysiaMobileDash(e.target.value))}
-                      placeholder="011-1234567"
+                      placeholder="011-12345678"
                       inputMode="numeric"
                       autoComplete="tel"
                     />
@@ -356,12 +308,24 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Admission date</Label>
-                    <Input type="date" value={form.admission_date} onChange={(e) => update('admission_date', e.target.value)} />
+                    <Label>Admission year</Label>
+                    <Input
+                      inputMode="numeric"
+                      placeholder="e.g. 2024"
+                      value={form.admission_date}
+                      onChange={(e) => update('admission_date', sanitizeYear(e.target.value))}
+                      maxLength={4}
+                    />
                   </div>
                   <div className="space-y-2">
-                    <Label>Expected graduation date</Label>
-                    <Input type="date" value={form.expected_graduation_date} onChange={(e) => update('expected_graduation_date', e.target.value)} />
+                    <Label>Expected graduation year</Label>
+                    <Input
+                      inputMode="numeric"
+                      placeholder="e.g. 2028"
+                      value={form.expected_graduation_date}
+                      onChange={(e) => update('expected_graduation_date', sanitizeYear(e.target.value))}
+                      maxLength={4}
+                    />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -382,7 +346,6 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
             {step === 2 && (
               <>
-                {/* Offer letter: file browse only */}
                 <div className="space-y-2">
                   <Label>Offer letter</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">

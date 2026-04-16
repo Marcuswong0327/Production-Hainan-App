@@ -200,4 +200,27 @@
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
   }
+
+  /* Visible text selection (default theme was effectively hiding highlight) */
+  ::selection {
+    background-color: #bfdbfe;
+    color: var(--foreground);
+  }
+
+  .dark ::selection {
+    background-color: #2563eb;
+    color: #f8fafc;
+  }
+
+  input::selection,
+  textarea::selection {
+    background-color: #93c5fd;
+    color: #0f172a;
+  }
+
+  .dark input::selection,
+  .dark textarea::selection {
+    background-color: #3b82f6;
+    color: #f8fafc;
+  }
 }

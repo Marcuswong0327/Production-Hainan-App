@@ -139,14 +139,12 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
         if (payError) throw payError;
 
         const newTotalPaid = recipient.total_paid + amount;
-        const newPaymentsMade = recipient.payments_made + 1;
         const newStatus = newTotalPaid >= recipient.loan_amount ? 'completed' : 'active';
 
         const { error: updError } = await supabase
           .from('study_loan_recipients')
           .update({
             total_paid: newTotalPaid,
-            payments_made: newPaymentsMade,
             status: newStatus,
             updated_at: new Date().toISOString(),
           })
@@ -156,7 +154,6 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
         onTotalsUpdated?.({
           ...recipient,
           total_paid: newTotalPaid,
-          payments_made: newPaymentsMade,
           status: newStatus,
           updated_at: new Date().toISOString(),
         });
@@ -177,12 +174,10 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
         if (idx !== -1) {
           const r = recipients[idx];
           const newTotalPaid = (r.total_paid || 0) + amount;
-          const newPaymentsMade = (r.payments_made || 0) + 1;
           const newStatus = newTotalPaid >= r.loan_amount ? 'completed' : 'active';
           recipients[idx] = {
             ...r,
             total_paid: newTotalPaid,
-            payments_made: newPaymentsMade,
             status: newStatus,
             updated_at: new Date().toISOString(),
           };
@@ -217,7 +212,7 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
     return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
   }, [payments]);
 
-  const titleName = [recipient.full_name, recipient.full_name_chinese?.trim()].filter(Boolean).join(' · ');
+  const titleName = [recipient.full_name_en, recipient.full_name_zh?.trim()].filter(Boolean).join(' · ');
 
   return (
     <div className="min-h-screen bg-gray-50">

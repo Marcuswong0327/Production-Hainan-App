@@ -133,49 +133,70 @@ ALTER TABLE study_loan_applications ADD COLUMN IF NOT EXISTS payments_made INTEG
 
 ### 3c. Manual loan recipients (track students who received the loan)
 
-For super admin to enter students manually and track repayment progress (and future notifications):
+Super Admin **Add student** saves:
+
+- **Student + loan** → `study_loan_recipients` (`full_name_en`, `full_name_zh`, `course`, `offer_letter_path`, `student_ic_front_back_path`, etc.)
+- **Guarantors + 文件截图** → `guarantors` (one row per student, FK `student_id` → `study_loan_recipients.id`)
+
+Run the migration in-repo (recommended): `supabase/migrations/20260416140000_study_loan_recipients_v2_and_guarantors.sql`, or use this equivalent outline:
 
 ```sql
-CREATE TABLE IF NOT EXISTS study_loan_recipients (
+CREATE TABLE IF NOT EXISTS public.study_loan_recipients (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  full_name TEXT NOT NULL,
+  full_name_en TEXT NOT NULL,
+  full_name_zh TEXT,
   email TEXT NOT NULL,
   phone_number TEXT NOT NULL,
   association TEXT NOT NULL,
   university TEXT NOT NULL,
-  courses TEXT NOT NULL,
+  course TEXT NOT NULL,
+  admission_date TEXT,
+  expected_graduation_date TEXT,
   loan_amount INTEGER NOT NULL,
   total_paid INTEGER NOT NULL DEFAULT 0,
   payments_made INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'completed')),
+  offer_letter_path TEXT,
+  student_ic_front_back_path TEXT,
   notes TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_study_loan_recipients_status ON study_loan_recipients (status);
-ALTER TABLE study_loan_recipients ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "Allow read study_loan_recipients" ON study_loan_recipients FOR SELECT USING (true);
-CREATE POLICY "Allow insert study_loan_recipients" ON study_loan_recipients FOR INSERT WITH CHECK (true);
-CREATE POLICY "Allow update study_loan_recipients" ON study_loan_recipients FOR UPDATE USING (true);
-CREATE POLICY "Allow delete study_loan_recipients" ON study_loan_recipients FOR DELETE USING (true);
+CREATE INDEX IF NOT EXISTS idx_study_loan_recipients_status ON public.study_loan_recipients (status);
+ALTER TABLE public.study_loan_recipients ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow read study_loan_recipients" ON public.study_loan_recipients FOR SELECT USING (true);
+CREATE POLICY "Allow insert study_loan_recipients" ON public.study_loan_recipients FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow update study_loan_recipients" ON public.study_loan_recipients FOR UPDATE USING (true);
+CREATE POLICY "Allow delete study_loan_recipients" ON public.study_loan_recipients FOR DELETE USING (true);
 
--- Optional: extra columns for full application-style data (admission, guarantor, document paths and pasted text)
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS admission_date TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS expected_graduation_date TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS loan_type TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_relationship TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_phone_number TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS offer_letter_path TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS ic_front_path TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS ic_back_path TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_ic_front_path TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_ic_back_path TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS ic_front_text TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS ic_back_text TEXT;
-ALTER TABLE study_loan_recipients ADD COLUMN IF NOT EXISTS guarantor_ic_text TEXT;
+CREATE TABLE IF NOT EXISTS public.guarantors (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id UUID NOT NULL REFERENCES public.study_loan_recipients(id) ON DELETE CASCADE,
+  guarantor_1_zh TEXT,
+  guarantor_1_en TEXT,
+  guarantor_1_ic TEXT,
+  guarantor_1_address TEXT,
+  guarantor_1_sign_date TEXT,
+  guarantor_2_zh TEXT,
+  guarantor_2_en TEXT,
+  guarantor_2_ic TEXT,
+  guarantor_2_address TEXT,
+  guarantor_2_sign_date TEXT,
+  guarantor_2_age INTEGER,
+  guarantor_info_pic TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT guarantors_student_id_unique UNIQUE (student_id)
+);
 
--- Optional: store individual repayment records with receipts
+ALTER TABLE public.guarantors ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow read guarantors" ON public.guarantors FOR SELECT USING (true);
+CREATE POLICY "Allow insert guarantors" ON public.guarantors FOR INSERT WITH CHECK (true);
+CREATE POLICY "Allow update guarantors" ON public.guarantors FOR UPDATE USING (true);
+CREATE POLICY "Allow delete guarantors" ON public.guarantors FOR DELETE USING (true);
+
+-- Repayment rows (unchanged)
 CREATE TABLE IF NOT EXISTS study_loan_payments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   recipient_id UUID NOT NULL REFERENCES study_loan_recipients(id) ON DELETE CASCADE,
@@ -213,6 +234,13 @@ WITH CHECK (bucket_id = 'study-loan-documents');
 CREATE POLICY "Allow read study loan documents"
 ON storage.objects FOR SELECT
 USING (bucket_id = 'study-loan-documents');
+
+-- Optional but recommended if you may replace an existing uploaded file path
+-- (app uploads with `upsert: true`)
+CREATE POLICY "Allow update study loan documents"
+ON storage.objects FOR UPDATE
+USING (bucket_id = 'study-loan-documents')
+WITH CHECK (bucket_id = 'study-loan-documents');
 ```
 
 If you prefer to do it via the UI: Storage → study-loan-documents → Policies → New policy → define “Allow upload” and “Allow read” for `study-loan-documents`.

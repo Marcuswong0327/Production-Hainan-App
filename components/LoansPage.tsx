@@ -121,12 +121,12 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
       return;
     }
     if (!isValidPhone(formData.phoneNumber)) {
-      setValidationError('Phone number must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
+      setValidationError('Phone number must be in the format 01X-XXXXXXX or longer (11–12 digits), e.g. 011-12345678.');
       setSubmitting(false);
       return;
     }
     if (!isValidPhone(formData.guarantorPhoneNumber)) {
-      setValidationError('Guarantor phone must be in the format 01X-XXXXXXX (e.g. 011-1234567).');
+      setValidationError('Guarantor phone must be in the format 01X-XXXXXXX or longer (11–12 digits), e.g. 011-12345678.');
       setSubmitting(false);
       return;
     }
@@ -533,7 +533,7 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
                     <Input
                       value={formData.phoneNumber}
                       onChange={(e) => handleInputChange('phoneNumber', formatMalaysiaMobileDash(e.target.value))}
-                      placeholder="011-1234567"
+                      placeholder="011-12345678"
                       inputMode="numeric"
                       autoComplete="tel"
                     />
@@ -699,7 +699,7 @@ export function LoansPage({ onBack, onApplied }: { onBack: () => void; onApplied
                       onChange={(e) =>
                         handleInputChange('guarantorPhoneNumber', formatMalaysiaMobileDash(e.target.value))
                       }
-                      placeholder="011-1234567"
+                      placeholder="011-12345678"
                       inputMode="numeric"
                       autoComplete="tel"
                     />

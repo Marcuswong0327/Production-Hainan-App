@@ -12,14 +12,39 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { CheckCircle, XCircle, FileText, Building2, Download, HeartHandshake, Eye, FileDown, CreditCard, ExternalLink, UserPlus, DollarSign, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import type { StudyLoanApplication, LoanRecipient } from '../types/studyLoan';
+import type { StudyLoanApplication, LoanRecipient, LoanRecipientCore, GuarantorInsert, GuarantorRow } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 import { AddLoanRecipientPage } from './AddLoanRecipientPage';
 import { RecordLoanPaymentsPage } from './RecordLoanPaymentsPage';
 import { LoanRecipientsStatsPage } from './LoanRecipientsStatsPage';
-import { GuarantorRelationshipSelect } from './GuarantorRelationshipSelect';
 import { formatMalaysiaMobileDash } from '../lib/malaysiaPhone';
-import { parseGuarantorPayload } from '../lib/guarantorRecipientPayload';
+import { mapLoanRecipientRow } from '../lib/mapLoanRecipient';
+
+/** Display/edit year-only fields; DB may still have legacy full dates — show leading year. */
+function yearFieldFromStored(stored: string | null | undefined): string {
+  if (!stored) return '';
+  const m = stored.match(/^(\d{4})/);
+  return m ? m[1] : stored.replace(/\D/g, '').slice(0, 4);
+}
+
+function emptyGuarantorRow(studentId: string): GuarantorRow {
+  return {
+    id: '',
+    student_id: studentId,
+    guarantor_1_zh: null,
+    guarantor_1_en: null,
+    guarantor_1_ic: null,
+    guarantor_1_address: null,
+    guarantor_1_sign_date: null,
+    guarantor_2_zh: null,
+    guarantor_2_en: null,
+    guarantor_2_ic: null,
+    guarantor_2_address: null,
+    guarantor_2_sign_date: null,
+    guarantor_2_age: null,
+    guarantor_info_pic: null,
+  };
+}
 
 
 interface Event {
@@ -247,36 +272,44 @@ export function SuperAdminDashboard() {
           // When approved, sync into loan recipients list so repayment can be tracked
           if (app) {
             const now = new Date().toISOString();
-            const recipient: LoanRecipient = {
+            const icMerged = app.ic_front_path || app.ic_back_path || null;
+            const core: LoanRecipientCore = {
               id: app.id,
-              full_name: app.full_name,
+              full_name_en: app.full_name,
+              full_name_zh: null,
+              loan_type: app.loan_type || null,
               email: app.email,
               phone_number: app.phone_number,
               association: app.association,
               university: app.university,
-              courses: app.courses,
+              course: app.courses,
               admission_date: app.admission_date,
               expected_graduation_date: app.expected_graduation_date,
-              loan_type: app.loan_type,
               loan_amount: app.loan_amount,
               total_paid: app.total_paid ?? 0,
-              payments_made: app.payments_made ?? 0,
               status: 'active',
-              guarantor_relationship: app.guarantor_relationship,
-              guarantor_phone_number: app.guarantor_phone_number,
               offer_letter_path: app.offer_letter_path,
-              ic_front_path: app.ic_front_path,
-              ic_back_path: app.ic_back_path,
-              guarantor_ic_front_path: app.guarantor_ic_front_path,
-              guarantor_ic_back_path: app.guarantor_ic_back_path,
-              ic_front_text: null,
-              ic_back_text: null,
-              guarantor_ic_text: null,
+              student_ic_front_back_path: icMerged,
               notes: null,
               created_at: now,
               updated_at: now,
             };
-            await saveLoanRecipient(recipient);
+            const guarantor: GuarantorInsert = {
+              student_id: app.id,
+              guarantor_1_zh: null,
+              guarantor_1_en: null,
+              guarantor_1_ic: null,
+              guarantor_1_address: null,
+              guarantor_1_sign_date: null,
+              guarantor_2_zh: null,
+              guarantor_2_en: null,
+              guarantor_2_ic: null,
+              guarantor_2_address: null,
+              guarantor_2_sign_date: null,
+              guarantor_2_age: null,
+              guarantor_info_pic: app.guarantor_ic_front_path || app.guarantor_ic_back_path,
+            };
+            await saveLoanRecipient(core, guarantor);
           }
           if (userId) notifyStudyLoanApplicant(userId, true);
           fetchStudyLoanApplications();
@@ -291,36 +324,43 @@ export function SuperAdminDashboard() {
           // Sync into loan recipients (local-only)
           if (app) {
             const now = new Date().toISOString();
-            const recipient: LoanRecipient = {
+            const core: LoanRecipientCore = {
               id: app.id,
-              full_name: app.full_name,
-              email: (app as any).email || '',
+              full_name_en: app.full_name,
+              full_name_zh: null,
+              loan_type: app.loan_type || null,
+              email: app.email,
               phone_number: app.phone_number,
               association: app.association,
               university: app.university,
-              courses: app.courses,
+              course: app.courses,
               admission_date: app.admission_date,
               expected_graduation_date: app.expected_graduation_date,
-              loan_type: app.loan_type,
               loan_amount: app.loan_amount,
               total_paid: app.total_paid ?? 0,
-              payments_made: app.payments_made ?? 0,
               status: 'active',
-              guarantor_relationship: app.guarantor_relationship,
-              guarantor_phone_number: app.guarantor_phone_number,
               offer_letter_path: null,
-              ic_front_path: null,
-              ic_back_path: null,
-              guarantor_ic_front_path: null,
-              guarantor_ic_back_path: null,
-              ic_front_text: null,
-              ic_back_text: null,
-              guarantor_ic_text: null,
+              student_ic_front_back_path: null,
               notes: null,
               created_at: now,
               updated_at: now,
             };
-            await saveLoanRecipient(recipient);
+            const guarantor: GuarantorInsert = {
+              student_id: app.id,
+              guarantor_1_zh: null,
+              guarantor_1_en: null,
+              guarantor_1_ic: null,
+              guarantor_1_address: null,
+              guarantor_1_sign_date: null,
+              guarantor_2_zh: null,
+              guarantor_2_en: null,
+              guarantor_2_ic: null,
+              guarantor_2_address: null,
+              guarantor_2_sign_date: null,
+              guarantor_2_age: null,
+              guarantor_info_pic: null,
+            };
+            await saveLoanRecipient(core, guarantor);
           }
           if (userId) notifyStudyLoanApplicant(userId, true);
           localStorage.setItem('myHainanLoanApplications', JSON.stringify(all));
@@ -409,8 +449,13 @@ export function SuperAdminDashboard() {
   const fetchLoanRecipients = async () => {
     try {
       if (isSupabaseConfigured() && supabase) {
-        const { data, error } = await supabase.from('study_loan_recipients').select('*').order('created_at', { ascending: false });
-        if (!error) setLoanRecipients((data as LoanRecipient[]) || []);
+        const { data, error } = await supabase
+          .from('study_loan_recipients')
+          .select('*, guarantors(*)')
+          .order('created_at', { ascending: false });
+        if (!error && data) {
+          setLoanRecipients(data.map((row) => mapLoanRecipientRow(row as Record<string, unknown>)));
+        }
       } else {
         const raw = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
         setLoanRecipients(raw);
@@ -420,44 +465,53 @@ export function SuperAdminDashboard() {
     }
   };
 
-  const saveLoanRecipient = async (newRecipient: LoanRecipient) => {
+  const saveLoanRecipient = async (core: LoanRecipientCore, guarantor: GuarantorInsert) => {
+    const merged: LoanRecipient = { ...core, guarantor: null };
     if (isSupabaseConfigured() && supabase) {
-      const { error } = await supabase.from('study_loan_recipients').insert({
-        id: newRecipient.id,
-        full_name: newRecipient.full_name,
-        full_name_chinese: newRecipient.full_name_chinese ?? null,
-        email: newRecipient.email,
-        phone_number: newRecipient.phone_number,
-        association: newRecipient.association,
-        university: newRecipient.university,
-        courses: newRecipient.courses,
-        admission_date: newRecipient.admission_date || null,
-        expected_graduation_date: newRecipient.expected_graduation_date || null,
-        loan_type: newRecipient.loan_type || null,
-        loan_amount: newRecipient.loan_amount,
-        total_paid: newRecipient.total_paid ?? 0,
-        payments_made: newRecipient.payments_made ?? 0,
-        status: newRecipient.status,
-        guarantor_relationship: newRecipient.guarantor_relationship || null,
-        guarantor_phone_number: newRecipient.guarantor_phone_number || null,
-        offer_letter_path: newRecipient.offer_letter_path || null,
-        ic_front_path: newRecipient.ic_front_path || null,
-        ic_back_path: newRecipient.ic_back_path || null,
-        guarantor_ic_front_path: newRecipient.guarantor_ic_front_path || null,
-        guarantor_ic_back_path: newRecipient.guarantor_ic_back_path || null,
-        ic_front_text: newRecipient.ic_front_text || null,
-        ic_back_text: newRecipient.ic_back_text || null,
-        guarantor_ic_text: newRecipient.guarantor_ic_text || null,
-        notes: newRecipient.notes || null,
-        updated_at: newRecipient.updated_at,
+      const { error: e1 } = await supabase.from('study_loan_recipients').insert({
+        id: core.id,
+        full_name_en: core.full_name_en,
+        full_name_zh: core.full_name_zh ?? null,
+        // Older schemas still have NOT NULL `full_name` / `courses` — mirror v2 fields so inserts succeed.
+        full_name: core.full_name_en,
+        courses: core.course,
+        loan_type: core.loan_type,
+        email: core.email,
+        phone_number: core.phone_number,
+        association: core.association,
+        university: core.university,
+        course: core.course,
+        admission_date: core.admission_date || null,
+        expected_graduation_date: core.expected_graduation_date || null,
+        loan_amount: core.loan_amount,
+        total_paid: core.total_paid ?? 0,
+        status: core.status,
+        offer_letter_path: core.offer_letter_path || null,
+        student_ic_front_back_path: core.student_ic_front_back_path || null,
+        notes: core.notes || null,
+        created_at: core.created_at,
+        updated_at: core.updated_at,
       });
-      if (error) throw error;
+      if (e1) throw e1;
+      const { data: gRow, error: e2 } = await supabase.from('guarantors').insert(guarantor).select().single();
+      if (e2) {
+        await supabase.from('study_loan_recipients').delete().eq('id', core.id);
+        throw e2;
+      }
+      merged.guarantor = gRow as GuarantorRow;
     } else {
+      const gLocal: GuarantorRow = {
+        id: crypto.randomUUID(),
+        ...guarantor,
+        created_at: core.created_at,
+        updated_at: core.updated_at,
+      };
+      merged.guarantor = gLocal;
       const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
-      list.unshift(newRecipient);
+      list.unshift(merged);
       localStorage.setItem('myHainanLoanRecipients', JSON.stringify(list));
     }
-    setLoanRecipients(prev => [newRecipient, ...prev]);
+    setLoanRecipients((prev) => [merged, ...prev]);
   };
 
   const deleteLoanRecipient = async (id: string) => {
@@ -485,34 +539,48 @@ export function SuperAdminDashboard() {
     try {
       if (isSupabaseConfigured() && supabase) {
         const { error } = await supabase.from('study_loan_recipients').update({
-          full_name: updated.full_name,
-          full_name_chinese: updated.full_name_chinese ?? null,
+          full_name_en: updated.full_name_en,
+          full_name_zh: updated.full_name_zh ?? null,
+          full_name: updated.full_name_en,
+          courses: updated.course,
+          loan_type: updated.loan_type,
           email: updated.email,
           phone_number: updated.phone_number,
           association: updated.association,
           university: updated.university,
-          courses: updated.courses,
+          course: updated.course,
           admission_date: updated.admission_date || null,
           expected_graduation_date: updated.expected_graduation_date || null,
-          loan_type: updated.loan_type || null,
           loan_amount: updated.loan_amount,
           total_paid: updated.total_paid,
-          payments_made: updated.payments_made,
           status: updated.status,
-          guarantor_relationship: updated.guarantor_relationship || null,
-          guarantor_phone_number: updated.guarantor_phone_number || null,
           offer_letter_path: updated.offer_letter_path || null,
-          ic_front_path: updated.ic_front_path || null,
-          ic_back_path: updated.ic_back_path || null,
-          guarantor_ic_front_path: updated.guarantor_ic_front_path || null,
-          guarantor_ic_back_path: updated.guarantor_ic_back_path || null,
-          ic_front_text: updated.ic_front_text || null,
-          ic_back_text: updated.ic_back_text || null,
-          guarantor_ic_text: updated.guarantor_ic_text || null,
+          student_ic_front_back_path: updated.student_ic_front_back_path || null,
           notes: updated.notes || null,
           updated_at: new Date().toISOString(),
         }).eq('id', updated.id);
         if (error) throw error;
+
+        const g = updated.guarantor ?? emptyGuarantorRow(updated.id);
+        const gPayload: Record<string, unknown> = {
+          student_id: updated.id,
+          guarantor_1_zh: g.guarantor_1_zh,
+          guarantor_1_en: g.guarantor_1_en,
+          guarantor_1_ic: g.guarantor_1_ic,
+          guarantor_1_address: g.guarantor_1_address,
+          guarantor_1_sign_date: g.guarantor_1_sign_date,
+          guarantor_2_zh: g.guarantor_2_zh,
+          guarantor_2_en: g.guarantor_2_en,
+          guarantor_2_ic: g.guarantor_2_ic,
+          guarantor_2_address: g.guarantor_2_address,
+          guarantor_2_sign_date: g.guarantor_2_sign_date,
+          guarantor_2_age: g.guarantor_2_age,
+          guarantor_info_pic: g.guarantor_info_pic,
+          updated_at: new Date().toISOString(),
+        };
+        if (g.id) gPayload.id = g.id;
+        const { error: gErr } = await supabase.from('guarantors').upsert(gPayload, { onConflict: 'student_id' });
+        if (gErr) throw gErr;
       } else {
         const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
         const idx = list.findIndex((r: LoanRecipient) => r.id === updated.id);
@@ -1179,7 +1247,7 @@ export function SuperAdminDashboard() {
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                               <div className="min-w-0 flex-1 space-y-2">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="font-semibold text-lg truncate">{r.full_name}</h3>
+                                  <h3 className="font-semibold text-lg truncate">{r.full_name_en}</h3>
                                   <Badge
                                     variant={r.status === 'completed' ? 'default' : 'secondary'}
                                     className={r.status === 'completed' ? 'bg-green-600' : 'bg-amber-600'}
@@ -1187,8 +1255,8 @@ export function SuperAdminDashboard() {
                                     {r.status}
                                   </Badge>
                                 </div>
-                                {r.full_name_chinese?.trim() ? (
-                                  <p className="text-sm text-gray-600">{r.full_name_chinese.trim()}</p>
+                                {r.full_name_zh?.trim() ? (
+                                  <p className="text-sm text-gray-600">{r.full_name_zh.trim()}</p>
                                 ) : null}
 
                                 {/* Mobile-first essential info */}
@@ -1222,9 +1290,8 @@ export function SuperAdminDashboard() {
                                 </div>
 
                                 {/* Desktop-only: hide noisy info on phone */}
-                                <div className="hidden sm:grid grid-cols-4 gap-2 text-xs text-gray-500">
-                                  <span className="truncate">Course: {r.courses || '-'}</span>
-                                  <span className="truncate">Type: {LOAN_TYPE_LABELS[r.loan_type || ''] || r.loan_type || '-'}</span>
+                                <div className="hidden sm:grid grid-cols-3 gap-2 text-xs text-gray-500">
+                                  <span className="truncate">Course: {r.course || '-'}</span>
                                   <span className="truncate">Email: {r.email || '-'}</span>
                                   <span className="truncate">Phone: {r.phone_number || '-'}</span>
                                 </div>
@@ -1240,7 +1307,10 @@ export function SuperAdminDashboard() {
                                     e.preventDefault();
                                     e.stopPropagation();
                                     setSelectedRecipientForDetails(r);
-                                    setEditRecipient({ ...r });
+                                    setEditRecipient({
+                                      ...r,
+                                      guarantor: r.guarantor ?? emptyGuarantorRow(r.id),
+                                    });
                                   }}
                                 >
                                   <Eye className="w-4 h-4 mr-1" />
@@ -1933,7 +2003,7 @@ export function SuperAdminDashboard() {
               <DialogHeader>
                 <DialogTitle>Edit loan recipient</DialogTitle>
                 <DialogDescription>
-                  Update details for {selectedRecipientForDetails.full_name}. Changes sync to Supabase.
+                  Update details for {selectedRecipientForDetails.full_name_en}. Changes sync to Supabase.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -1941,15 +2011,15 @@ export function SuperAdminDashboard() {
                   <div className="space-y-2">
                     <Label>Full name (English)</Label>
                     <Input
-                      value={editRecipient.full_name}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, full_name: e.target.value })}
+                      value={editRecipient.full_name_en}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, full_name_en: e.target.value })}
                     />
                   </div>
                   <div className="space-y-2">
                     <Label>Chinese name (中文)</Label>
                     <Input
-                      value={editRecipient.full_name_chinese || ''}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, full_name_chinese: e.target.value })}
+                      value={editRecipient.full_name_zh || ''}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, full_name_zh: e.target.value })}
                       placeholder="中文姓名"
                     />
                   </div>
@@ -1970,7 +2040,7 @@ export function SuperAdminDashboard() {
                       onChange={(e) =>
                         setEditRecipient({ ...editRecipient, phone_number: formatMalaysiaMobileDash(e.target.value) })
                       }
-                      placeholder="011-1234567"
+                      placeholder="011-12345678"
                       inputMode="numeric"
                       autoComplete="tel"
                     />
@@ -1993,27 +2063,41 @@ export function SuperAdminDashboard() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Courses</Label>
+                  <Label>Course</Label>
                   <Input
-                    value={editRecipient.courses}
-                    onChange={(e) => setEditRecipient({ ...editRecipient, courses: e.target.value })}
+                    value={editRecipient.course}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, course: e.target.value })}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Admission date</Label>
+                    <Label>Admission year</Label>
                     <Input
-                      type="date"
-                      value={editRecipient.admission_date || ''}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, admission_date: e.target.value })}
+                      inputMode="numeric"
+                      placeholder="e.g. 2024"
+                      maxLength={4}
+                      value={yearFieldFromStored(editRecipient.admission_date)}
+                      onChange={(e) =>
+                        setEditRecipient({
+                          ...editRecipient,
+                          admission_date: e.target.value.replace(/\D/g, '').slice(0, 4),
+                        })
+                      }
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Expected graduation date</Label>
+                    <Label>Expected graduation year</Label>
                     <Input
-                      type="date"
-                      value={editRecipient.expected_graduation_date || ''}
-                      onChange={(e) => setEditRecipient({ ...editRecipient, expected_graduation_date: e.target.value })}
+                      inputMode="numeric"
+                      placeholder="e.g. 2028"
+                      maxLength={4}
+                      value={yearFieldFromStored(editRecipient.expected_graduation_date)}
+                      onChange={(e) =>
+                        setEditRecipient({
+                          ...editRecipient,
+                          expected_graduation_date: e.target.value.replace(/\D/g, '').slice(0, 4),
+                        })
+                      }
                     />
                   </div>
                 </div>
@@ -2037,81 +2121,188 @@ export function SuperAdminDashboard() {
                     />
                   </div>
                 </div>
-                <div className="space-y-4">
-                  <GuarantorRelationshipSelect
-                    id="edit-guarantor-relationship"
-                    value={editRecipient.guarantor_relationship || ''}
-                    onChange={(v) => setEditRecipient({ ...editRecipient, guarantor_relationship: v })}
-                  />
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-guarantor-phone">Guarantor phone</Label>
-                    <Input
-                      id="edit-guarantor-phone"
-                      value={editRecipient.guarantor_phone_number || ''}
-                      onChange={(e) =>
-                        setEditRecipient({
-                          ...editRecipient,
-                          guarantor_phone_number: formatMalaysiaMobileDash(e.target.value),
-                        })
-                      }
-                      placeholder="011-1234567"
-                      inputMode="numeric"
-                      autoComplete="tel"
-                    />
-                  </div>
-                </div>
-
-                {/* Uploaded IC details and files (student + guarantor) */}
-                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                  <h3 className="font-semibold text-sm text-gray-900">IC details from uploaded files</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
+                  <h3 className="font-semibold text-sm text-gray-900">担保人（relational table）</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
                     <div className="space-y-1">
-                      <Label className="text-xs">Student IC information</Label>
-                      <Textarea
-                        rows={3}
-                        placeholder="IC number / address if recorded when adding the student"
-                        value={editRecipient.ic_front_text || ''}
-                        onChange={(e) => setEditRecipient({ ...editRecipient, ic_front_text: e.target.value })}
+                      <Label className="text-xs">担保人（一）姓名（中文）</Label>
+                      <Input
+                        value={editRecipient.guarantor?.guarantor_1_zh || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_1_zh: e.target.value || null,
+                            },
+                          })
+                        }
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-xs">担保人资料（JSON / 手动编辑）</Label>
-                      {(() => {
-                        const p = parseGuarantorPayload(editRecipient.guarantor_ic_text);
-                        return (
-                          <>
-                            {p && (
-                              <div className="rounded border border-gray-200 bg-white p-3 text-xs text-gray-800 space-y-3 mb-2">
-                                <div>
-                                  <p className="font-semibold text-gray-900">担保人（一）属会主席</p>
-                                  <p>姓名（中文）：{p.g1.name_zh}</p>
-                                  <p>姓名（英文）：{p.g1.name_en}</p>
-                                  <p>身份证号码：{p.g1.ic}</p>
-                                  <p>地址：{p.g1.address}</p>
-                                  <p>日期：{p.g1.date}</p>
-                                </div>
-                                <div>
-                                  <p className="font-semibold text-gray-900">担保人（二）家属亲人</p>
-                                  <p>姓名（中文）：{p.g2.name_zh}</p>
-                                  <p>姓名（英文）：{p.g2.name_en}</p>
-                                  <p>年龄：{p.g2.age}</p>
-                                  <p>身份证号码：{p.g2.ic}</p>
-                                  <p>地址：{p.g2.address}</p>
-                                  <p>日期：{p.g2.date}</p>
-                                </div>
-                              </div>
-                            )}
-                            <Textarea
-                              rows={3}
-                              placeholder="Guarantor details (structured JSON when added via Add student)"
-                              value={editRecipient.guarantor_ic_text || ''}
-                              onChange={(e) => setEditRecipient({ ...editRecipient, guarantor_ic_text: e.target.value })}
-                            />
-                          </>
-                        );
-                      })()}
+                      <Label className="text-xs">担保人（一）姓名（英文）</Label>
+                      <Input
+                        value={editRecipient.guarantor?.guarantor_1_en || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_1_en: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（一）身份证</Label>
+                      <Input
+                        value={editRecipient.guarantor?.guarantor_1_ic || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_1_ic: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（一）日期</Label>
+                      <Input
+                        type="date"
+                        value={editRecipient.guarantor?.guarantor_1_sign_date || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_1_sign_date: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label className="text-xs">担保人（一）地址</Label>
+                      <Textarea
+                        rows={2}
+                        value={editRecipient.guarantor?.guarantor_1_address || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_1_address: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
                     </div>
                   </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm pt-2 border-t border-gray-200">
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（二）姓名（中文）</Label>
+                      <Input
+                        value={editRecipient.guarantor?.guarantor_2_zh || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_2_zh: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（二）姓名（英文）</Label>
+                      <Input
+                        value={editRecipient.guarantor?.guarantor_2_en || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_2_en: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（二）年龄</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={65}
+                        value={editRecipient.guarantor?.guarantor_2_age ?? ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_2_age: e.target.value === '' ? null : parseInt(e.target.value, 10),
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（二）身份证</Label>
+                      <Input
+                        value={editRecipient.guarantor?.guarantor_2_ic || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_2_ic: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">担保人（二）日期</Label>
+                      <Input
+                        type="date"
+                        value={editRecipient.guarantor?.guarantor_2_sign_date || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_2_sign_date: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-1 md:col-span-2">
+                      <Label className="text-xs">担保人（二）地址</Label>
+                      <Textarea
+                        rows={2}
+                        value={editRecipient.guarantor?.guarantor_2_address || ''}
+                        onChange={(e) =>
+                          setEditRecipient({
+                            ...editRecipient,
+                            guarantor: {
+                              ...(editRecipient.guarantor ?? emptyGuarantorRow(editRecipient.id)),
+                              guarantor_2_address: e.target.value || null,
+                            },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                  <h3 className="font-semibold text-sm text-gray-900">Uploaded documents</h3>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {editRecipient.offer_letter_path && (
                       <Button
@@ -2123,54 +2314,32 @@ export function SuperAdminDashboard() {
                         <ExternalLink className="w-3 h-3 mr-1" /> Offer letter
                       </Button>
                     )}
-                    {editRecipient.ic_front_path && (
+                    {editRecipient.student_ic_front_back_path && (
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => openStudyLoanDocument(editRecipient.ic_front_path || null, 'Student IC front')}
+                        onClick={() => openStudyLoanDocument(editRecipient.student_ic_front_back_path || null, 'Student IC (combined)')}
                       >
-                        <ExternalLink className="w-3 h-3 mr-1" /> Student IC front
+                        <ExternalLink className="w-3 h-3 mr-1" /> Student IC
                       </Button>
                     )}
-                    {editRecipient.ic_back_path && (
+                    {editRecipient.guarantor?.guarantor_info_pic && (
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
-                        onClick={() => openStudyLoanDocument(editRecipient.ic_back_path || null, 'Student IC back')}
-                      >
-                        <ExternalLink className="w-3 h-3 mr-1" /> Student IC back
-                      </Button>
-                    )}
-                    {editRecipient.guarantor_ic_front_path && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openStudyLoanDocument(editRecipient.guarantor_ic_front_path || null, '文件截图')}
+                        onClick={() =>
+                          openStudyLoanDocument(editRecipient.guarantor?.guarantor_info_pic ?? null, '文件截图')
+                        }
                       >
                         <ExternalLink className="w-3 h-3 mr-1" /> 文件截图
                       </Button>
                     )}
-                    {editRecipient.guarantor_ic_back_path && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openStudyLoanDocument(editRecipient.guarantor_ic_back_path || null, 'Guarantor IC back')}
-                      >
-                        <ExternalLink className="w-3 h-3 mr-1" /> Guarantor IC back
-                      </Button>
-                    )}
                     {!editRecipient.offer_letter_path &&
-                      !editRecipient.ic_front_path &&
-                      !editRecipient.ic_back_path &&
-                      !editRecipient.guarantor_ic_front_path &&
-                      !editRecipient.guarantor_ic_back_path && (
-                        <p className="text-xs text-gray-500">
-                          No document paths stored for this recipient. New entries will save paths when files are uploaded.
-                        </p>
+                      !editRecipient.student_ic_front_back_path &&
+                      !editRecipient.guarantor?.guarantor_info_pic && (
+                        <p className="text-xs text-gray-500">No document paths stored for this recipient.</p>
                       )}
                   </div>
                 </div>
