@@ -347,7 +347,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
             {step === 2 && (
               <>
                 <div className="space-y-2">
-                  <Label>Offer letter</Label>
+                  <Label>Offer letter (optional)</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
                     <input
                       type="file"
@@ -366,7 +366,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Student IC document (front + back in one file)</Label>
+                  <Label>Student IC document (front + back in one file, optional)</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-2 text-center">
                     <input
                       type="file"

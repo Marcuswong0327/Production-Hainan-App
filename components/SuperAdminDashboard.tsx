@@ -493,12 +493,18 @@ export function SuperAdminDashboard() {
         updated_at: core.updated_at,
       });
       if (e1) throw e1;
-      const { data: gRow, error: e2 } = await supabase.from('guarantors').insert(guarantor).select().single();
+      // Avoid relying on `.select().single()` response shape (can fail on some RLS setups).
+      const { error: e2 } = await supabase.from('guarantors').insert(guarantor);
       if (e2) {
         await supabase.from('study_loan_recipients').delete().eq('id', core.id);
         throw e2;
       }
-      merged.guarantor = gRow as GuarantorRow;
+      merged.guarantor = {
+        id: crypto.randomUUID(),
+        ...guarantor,
+        created_at: core.created_at,
+        updated_at: core.updated_at,
+      };
     } else {
       const gLocal: GuarantorRow = {
         id: crypto.randomUUID(),
@@ -1187,7 +1193,7 @@ export function SuperAdminDashboard() {
           <TabsContent value="recipients">
             <Card>
               <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <CardTitle className="flex items-center gap-2">
                       <UserPlus className="w-5 h-5" />
@@ -1197,27 +1203,22 @@ export function SuperAdminDashboard() {
                       Manually add students who received the study loan to track repayment progress. Data is used for notifications later.
                     </CardDescription>
                   </div>
-                  <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
-                    <div className="flex flex-wrap justify-end gap-2 w-full sm:w-auto">
+                  <div className="ml-auto w-full sm:w-auto">
+                    <div className="flex flex-wrap justify-end gap-2">
                       <Button
                         variant="outline"
-                        className="ml-auto"
                         onClick={() => { setActiveTab('recipients'); setShowNotificationDialog(true); }}
                       >
                         Send notifications
                       </Button>
                       <Button
-                        className="ml-auto"
                         onClick={() => { setActiveTab('recipients'); setShowAddRecipientPage(true); }}
                       >
                         <UserPlus className="w-4 h-4 mr-2" />
                         Add student
                       </Button>
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-2 w-full sm:w-auto">
                       <Button
                         variant="outline"
-                        className="ml-auto"
                         onClick={() => { setActiveTab('recipients'); setShowLoanStats(true); }}
                       >
                         Overall stats
