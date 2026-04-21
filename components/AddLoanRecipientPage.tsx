@@ -97,11 +97,13 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       !form.phone_number.trim() ||
       !form.university.trim() ||
       !form.courses.trim() ||
-      !form.loan_type ||
-      !amount ||
-      amount <= 0
+      !form.loan_type
     ) {
-      alert('Please fill all required fields (association, name, email, phone, university, course, loan type/amount).');
+      alert('Please fill all required fields (association, name, email, phone, university, course, loan type).');
+      return;
+    }
+    if (amount <= 0) {
+      alert('Invalid loan type selected. Please reselect loan type.');
       return;
     }
     const g1Ok =
