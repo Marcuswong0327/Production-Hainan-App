@@ -167,12 +167,13 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       let guarantor_info_pic: string | null = null;
 
       if (isSupabaseConfigured() && supabase) {
+        const client = supabase;
         const prefix = `recipients/${id}`;
         const upload = async (file: File | null, pathKey: string): Promise<string | null> => {
           if (!file) return null;
           const ext = file.name.split('.').pop() || 'bin';
           const path = `${prefix}/${pathKey}.${ext}`;
-          const { error } = await supabase.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
+          const { error } = await client.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
           if (error) throw new Error(`Upload failed: ${pathKey}`);
           return path;
         };

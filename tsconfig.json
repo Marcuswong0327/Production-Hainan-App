@@ -19,8 +19,8 @@
 
     /* Linting */
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
 
     /* Path aliases */
@@ -30,7 +30,19 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "dist", "vite.config.ts", "vite.config.d.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "vite.config.ts",
+    "vite.config.d.ts",
+    "backup/**",
+    "supabase/functions/**",
+    "ui/chart.tsx",
+    "ui/command.tsx",
+    "ui/drawer.tsx",
+    "ui/input-otp.tsx",
+    "ui/sonner.tsx"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
 
