@@ -25,6 +25,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name: string, role: string, associationId?: string) => Promise<void>;
+  forgotPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
   switchRole: (role: string, verificationId?: string) => Promise<void>;
   updateUser: (updates: Partial<UserProfile>) => void;
@@ -221,6 +222,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('myHainanUser', JSON.stringify({ ...newUser, password }));
   };
 
+  const forgotPassword = async (email: string) => {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) throw new Error('Please enter your email.');
+    if (isSupabaseConfigured() && supabase) {
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: `${window.location.origin}/`,
+      });
+      if (error) throw new Error(error.message);
+      return;
+    }
+    throw new Error('Password reset requires Supabase configuration.');
+  };
+
   const signOut = async () => {
     if (isSupabaseConfigured() && supabase) {
       await supabase.auth.signOut();
@@ -269,7 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     : undefined;
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut, switchRole, updateUser, changePassword }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signUp, forgotPassword, signOut, switchRole, updateUser, changePassword }}>
       {children}
     </AuthContext.Provider>
   );

@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 
 
 export function AuthPage() {
-  const { signIn, signUp } = useAuth();
+  const { signIn, signUp, forgotPassword } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -32,6 +32,10 @@ export function AuthPage() {
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!signInEmail.trim() || !signInPassword) {
+      setError('Please enter email and password.');
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -72,14 +76,15 @@ export function AuthPage() {
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!resetEmail.trim()) {
+      setError('Please enter your email.');
+      return;
+    }
     setLoading(true);
     setError('');
-
-
+    setResetSuccess(false);
     try {
-      // Add your forgot password logic here
-      // For example, you might call a function from your AuthContext
-      // await forgotPassword(resetEmail);
+      await forgotPassword(resetEmail);
       setResetSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Failed to reset password');
@@ -106,7 +111,14 @@ export function AuthPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="signin" className="w-full">
+          <Tabs
+            defaultValue="signin"
+            className="w-full"
+            onValueChange={() => {
+              setError('');
+              setResetSuccess(false);
+            }}
+          >
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="signin">Sign In</TabsTrigger>
               <TabsTrigger value="signup">Sign Up</TabsTrigger>
@@ -122,7 +134,10 @@ export function AuthPage() {
                     type="email"
                     placeholder="you@example.com"
                     value={signInEmail}
-                    onChange={(e) => setSignInEmail(e.target.value)}
+                    onChange={(e) => {
+                      setSignInEmail(e.target.value);
+                      if (error) setError('');
+                    }}
                     className="w-full"
                     required
                   />
@@ -133,7 +148,10 @@ export function AuthPage() {
                     id="signin-password"
                     type="password"
                     value={signInPassword}
-                    onChange={(e) => setSignInPassword(e.target.value)}
+                    onChange={(e) => {
+                      setSignInPassword(e.target.value);
+                      if (error) setError('');
+                    }}
                     className="w-full"
                     required
                   />
@@ -177,7 +195,10 @@ export function AuthPage() {
                     type="email"
                     placeholder="you@example.com"
                     value={signUpEmail}
-                    onChange={(e) => setSignUpEmail(e.target.value)}
+                    onChange={(e) => {
+                      setSignUpEmail(e.target.value);
+                      if (error) setError('');
+                    }}
                     required
                   />
                 </div>
@@ -253,7 +274,10 @@ export function AuthPage() {
                     type="email"
                     placeholder="you@example.com"
                     value={resetEmail}
-                    onChange={(e) => setResetEmail(e.target.value)}
+                    onChange={(e) => {
+                      setResetEmail(e.target.value);
+                      if (error) setError('');
+                    }}
                     required
                   />
                 </div>
