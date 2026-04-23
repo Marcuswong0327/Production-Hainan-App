@@ -128,11 +128,9 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       alert('担保人（二）年龄须为 1–65 岁。');
       return;
     }
-    if (isSupabaseConfigured()) {
-      if (!documentScreenshotFile || !isAllowedScreenshotFile(documentScreenshotFile)) {
-        alert('请上传「文件截图」（PNG、PDF 或 JPG）。');
-        return;
-      }
+    if (documentScreenshotFile && !isAllowedScreenshotFile(documentScreenshotFile)) {
+      alert('文件截图仅支持 PNG、PDF 或 JPG。');
+      return;
     }
     if (paidAmount > amount) {
       alert('Paid amount cannot be more than the loan amount.');
@@ -456,7 +454,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="doc-screenshot">文件截图 *{isSupabaseConfigured() ? '' : '（启用 Supabase 后会上传）'}</Label>
+                  <Label htmlFor="doc-screenshot">文件截图 (Optional) {isSupabaseConfigured() ? '' : '（启用 Supabase 后会上传）'}</Label>
                   <div className="border-2 border-dashed border-gray-300 rounded-lg px-3 py-4 text-center">
                     <input
                       type="file"
