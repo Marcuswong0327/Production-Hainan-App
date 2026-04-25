@@ -103,7 +103,26 @@ const LOAN_TYPE_LABELS: Record<string, string> = {
   tvet_vocational: 'TVET / Vocational',
   master: 'Master',
   phd: 'PhD',
+  degree_3000: 'Degree (学士) - RM 3,000 / year',
+  degree_4000: 'Degree (学士) - RM 4,000 / year',
+  tvet_vocational_3000: 'TVET / Vocasional (技职教育) - RM 3,000 / year',
+  tvet_vocational_4000: 'TVET / Vocasional (技职教育) - RM 4,000 / year',
+  master_5000: 'Master (硕士) - RM 5,000 / year',
+  master_6000: 'Master (硕士) - RM 6,000 / year',
+  phd_5000: 'PhD (博士) - RM 5,000 / year',
+  phd_6000: 'PhD (博士) - RM 6,000 / year',
 };
+
+const LOAN_TYPE_OPTIONS: Array<{ value: string; label: string; amount: number }> = [
+  { value: 'degree_3000', label: 'Degree (学士)', amount: 3000 },
+  { value: 'degree_4000', label: 'Degree (学士)', amount: 4000 },
+  { value: 'tvet_vocational_3000', label: 'TVET / Vocasional (技职教育)', amount: 3000 },
+  { value: 'tvet_vocational_4000', label: 'TVET / Vocasional (技职教育)', amount: 4000 },
+  { value: 'master_5000', label: 'Master (硕士)', amount: 5000 },
+  { value: 'master_6000', label: 'Master (硕士)', amount: 6000 },
+  { value: 'phd_5000', label: 'PhD (博士)', amount: 5000 },
+  { value: 'phd_6000', label: 'PhD (博士)', amount: 6000 },
+];
 
 export function SuperAdminDashboard() {
   const { signOut } = useAuth();
@@ -133,6 +152,9 @@ export function SuperAdminDashboard() {
   const [recordPaymentsRecipient, setRecordPaymentsRecipient] = useState<LoanRecipient | null>(null);
   const [selectedRecipientForDetails, setSelectedRecipientForDetails] = useState<LoanRecipient | null>(null);
   const [editRecipient, setEditRecipient] = useState<LoanRecipient | null>(null);
+  const [editOfferLetterFile, setEditOfferLetterFile] = useState<File | null>(null);
+  const [editStudentIcFile, setEditStudentIcFile] = useState<File | null>(null);
+  const [editDocScreenshotFile, setEditDocScreenshotFile] = useState<File | null>(null);
   const [showNotificationDialog, setShowNotificationDialog] = useState(false);
   const [notificationTarget, setNotificationTarget] = useState<'all' | 'active' | 'completed'>('active');
   const [notificationMessage, setNotificationMessage] = useState(
@@ -544,6 +566,18 @@ export function SuperAdminDashboard() {
   const updateLoanRecipient = async (updated: LoanRecipient) => {
     try {
       if (isSupabaseConfigured() && supabase) {
+        const upload = async (file: File | null, pathKey: string): Promise<string | null> => {
+          if (!file) return null;
+          const ext = file.name.split('.').pop() || 'bin';
+          const path = `recipients/${updated.id}/${pathKey}.${ext}`;
+          const { error } = await supabase.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
+          if (error) throw error;
+          return path;
+        };
+        const newOfferPath = await upload(editOfferLetterFile, 'offer_letter');
+        const newStudentIcPath = await upload(editStudentIcFile, 'student_ic');
+        const newDocScreenshotPath = await upload(editDocScreenshotFile, 'guarantor_info_pic');
+
         const { error } = await supabase.from('study_loan_recipients').update({
           full_name_en: updated.full_name_en,
           full_name_zh: updated.full_name_zh ?? null,
@@ -560,8 +594,8 @@ export function SuperAdminDashboard() {
           loan_amount: updated.loan_amount,
           total_paid: updated.total_paid,
           status: updated.status,
-          offer_letter_path: updated.offer_letter_path || null,
-          student_ic_front_back_path: updated.student_ic_front_back_path || null,
+          offer_letter_path: newOfferPath || updated.offer_letter_path || null,
+          student_ic_front_back_path: newStudentIcPath || updated.student_ic_front_back_path || null,
           notes: updated.notes || null,
           updated_at: new Date().toISOString(),
         }).eq('id', updated.id);
@@ -581,7 +615,7 @@ export function SuperAdminDashboard() {
           guarantor_2_address: g.guarantor_2_address,
           guarantor_2_sign_date: g.guarantor_2_sign_date,
           guarantor_2_age: g.guarantor_2_age,
-          guarantor_info_pic: g.guarantor_info_pic,
+          guarantor_info_pic: newDocScreenshotPath || g.guarantor_info_pic,
           updated_at: new Date().toISOString(),
         };
         if (g.id) gPayload.id = g.id;
@@ -598,6 +632,9 @@ export function SuperAdminDashboard() {
       setLoanRecipients(prev => prev.map(r => r.id === updated.id ? { ...r, ...updated } : r));
       setSelectedRecipientForDetails(null);
       setEditRecipient(null);
+      setEditOfferLetterFile(null);
+      setEditStudentIcFile(null);
+      setEditDocScreenshotFile(null);
     } catch (err: any) {
       alert(err?.message || 'Failed to update recipient.');
     }
@@ -1241,7 +1278,11 @@ export function SuperAdminDashboard() {
                   <div className="space-y-3">
                     {loanRecipients.map((r) => {
                       const remaining = Math.max(0, r.loan_amount - r.total_paid);
-                      const progress = r.loan_amount > 0 ? (r.total_paid / r.loan_amount) * 100 : 0;
+                      const progressRaw = r.loan_amount > 0 ? (r.total_paid / r.loan_amount) * 100 : 0;
+                      const progress = Math.min(100, Math.max(0, progressRaw));
+                      const admissionYear = (r.admission_date || '').toString().slice(0, 4);
+                      const graduationYear = (r.expected_graduation_date || '').toString().slice(0, 4);
+                      const loanTypeLabel = LOAN_TYPE_LABELS[r.loan_type || ''] || r.loan_type || '-';
                       return (
                         <Card key={r.id}>
                           <CardContent className="p-4">
@@ -1259,16 +1300,23 @@ export function SuperAdminDashboard() {
                                 {r.full_name_zh?.trim() ? (
                                   <p className="text-sm text-gray-600">{r.full_name_zh.trim()}</p>
                                 ) : null}
+                                <p className="text-xs text-blue-800">Loan type: {loanTypeLabel}</p>
 
                                 {/* Mobile-first essential info */}
                                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
                                   <span className="truncate max-w-[12rem] sm:max-w-none">{r.university}</span>
-                                  <span className="truncate max-w-[12rem] sm:max-w-none">{r.association}</span>
+                                  <span className="truncate max-w-[12rem] sm:max-w-none">{r.course || '-'}</span>
                                 </div>
+                                {(admissionYear || graduationYear) && (
+                                  <div className="rounded-md border border-blue-100 bg-blue-50/60 px-3 py-2 text-xs text-blue-900">
+                                    <span className="font-medium">Study period:</span>{' '}
+                                    {admissionYear || '—'} to {graduationYear || '—'}
+                                  </div>
+                                )}
 
                                 <div className="grid grid-cols-3 gap-2 text-sm">
                                   <div>
-                                    <div className="text-xs text-gray-500">Loan</div>
+                                    <div className="text-xs text-gray-500">Total loan applied</div>
                                     <div className="font-medium">RM {r.loan_amount.toLocaleString()}</div>
                                   </div>
                                   <div>
@@ -1284,16 +1332,15 @@ export function SuperAdminDashboard() {
                                 <div className="flex items-center gap-3">
                                   <div className="flex-1">
                                     <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-                                      <div className="h-full bg-green-600 rounded-full" style={{ width: `${Math.min(100, progress)}%` }} />
+                                      <div className="h-full bg-green-600 rounded-full" style={{ width: `${progress}%` }} />
                                     </div>
                                   </div>
                                   <div className="text-sm font-medium whitespace-nowrap">{Math.round(progress)}%</div>
                                 </div>
 
                                 {/* Desktop-only: hide noisy info on phone */}
-                                <div className="hidden sm:grid grid-cols-3 gap-2 text-xs text-gray-500">
-                                  <span className="truncate">Course: {r.course || '-'}</span>
-                                  <span className="truncate">Email: {r.email || '-'}</span>
+                                <div className="hidden sm:grid grid-cols-2 gap-2 text-xs text-gray-500">
+                                  <span className="truncate">Association: {r.association || '-'}</span>
                                   <span className="truncate">Phone: {r.phone_number || '-'}</span>
                                 </div>
                               </div>
@@ -1997,7 +2044,18 @@ export function SuperAdminDashboard() {
       </Dialog>
 
       {/* View / Edit loan recipient details */}
-      <Dialog open={!!selectedRecipientForDetails} onOpenChange={(open) => { if (!open) { setSelectedRecipientForDetails(null); setEditRecipient(null); } }}>
+      <Dialog
+        open={!!selectedRecipientForDetails}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedRecipientForDetails(null);
+            setEditRecipient(null);
+            setEditOfferLetterFile(null);
+            setEditStudentIcFile(null);
+            setEditDocScreenshotFile(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white text-gray-900">
           {selectedRecipientForDetails && editRecipient && (
             <>
@@ -2069,6 +2127,24 @@ export function SuperAdminDashboard() {
                     value={editRecipient.course}
                     onChange={(e) => setEditRecipient({ ...editRecipient, course: e.target.value })}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label>Loan type</Label>
+                  <Select
+                    value={editRecipient.loan_type || ''}
+                    onValueChange={(v) => setEditRecipient({ ...editRecipient, loan_type: v })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select loan type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {LOAN_TYPE_OPTIONS.map((t) => (
+                        <SelectItem key={t.value} value={t.value}>
+                          {t.label} - RM {t.amount.toLocaleString()}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -2304,6 +2380,23 @@ export function SuperAdminDashboard() {
 
                 <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                   <h3 className="font-semibold text-sm text-gray-900">Uploaded documents</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Replace offer letter</Label>
+                      <Input type="file" accept=".pdf,image/*" onChange={(e) => setEditOfferLetterFile(e.target.files?.[0] || null)} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Replace student IC</Label>
+                      <Input type="file" accept=".pdf,image/*" onChange={(e) => setEditStudentIcFile(e.target.files?.[0] || null)} />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Replace 文件截图</Label>
+                      <Input type="file" accept=".pdf,image/*" onChange={(e) => setEditDocScreenshotFile(e.target.files?.[0] || null)} />
+                    </div>
+                  </div>
+                  {(editOfferLetterFile || editStudentIcFile || editDocScreenshotFile) && (
+                    <p className="text-xs text-blue-700">New file selections will be uploaded when you click "Save changes".</p>
+                  )}
                   <div className="flex flex-wrap gap-2 mt-2">
                     {editRecipient.offer_letter_path && (
                       <Button
@@ -2373,6 +2466,9 @@ export function SuperAdminDashboard() {
                   onClick={() => {
                     setSelectedRecipientForDetails(null);
                     setEditRecipient(null);
+                    setEditOfferLetterFile(null);
+                    setEditStudentIcFile(null);
+                    setEditDocScreenshotFile(null);
                   }}
                 >
                   Cancel
