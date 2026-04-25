@@ -13,10 +13,14 @@ import { formatMalaysiaMobileDash, isValidMalaysiaMobileDash } from '../lib/mala
 import { AssociationSelect } from './AssociationSelect';
 
 const LOAN_TYPES = [
-  { value: 'degree', label: 'Degree (学士)', amount: 4000 },
-  { value: 'tvet_vocational', label: 'TVET / Vocational (技职教育)', amount: 4000 },
-  { value: 'master', label: 'Master (硕士)', amount: 6000 },
-  { value: 'phd', label: 'PhD (博士)', amount: 6000 },
+  { value: 'degree_3000', label: 'Degree (学士)', amount: 3000 },
+  { value: 'degree_4000', label: 'Degree (学士)', amount: 4000 },
+  { value: 'tvet_vocational_3000', label: 'TVET / Vocasional (技职教育)', amount: 3000 },
+  { value: 'tvet_vocational_4000', label: 'TVET / Vocasional (技职教育)', amount: 4000 },
+  { value: 'master_5000', label: 'Master (硕士)', amount: 5000 },
+  { value: 'master_6000', label: 'Master (硕士)', amount: 6000 },
+  { value: 'phd_5000', label: 'PhD (博士)', amount: 5000 },
+  { value: 'phd_6000', label: 'PhD (博士)', amount: 6000 },
 ];
 
 interface AddLoanRecipientPageProps {
@@ -36,6 +40,7 @@ const initialForm = {
   admission_date: '',
   expected_graduation_date: '',
   loan_type: '',
+  total_loan: '',
   loan_amount: '',
   g1_name_zh: '',
   g1_name_en: '',
@@ -61,7 +66,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
 
   const update = (key: string, value: string) => setForm(f => ({ ...f, [key]: value }));
 
-  const loanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? 0) : 0;
+  const annualLoanAmount = form.loan_type ? (LOAN_TYPES.find(t => t.value === form.loan_type)?.amount ?? 0) : 0;
 
   const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
   const isValidPhone = (value: string) => isValidMalaysiaMobileDash(value);
@@ -87,40 +92,43 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
   };
 
   const handleSubmit = async () => {
-    const amount = loanAmount;
+    const studyYears =
+      form.admission_date && form.expected_graduation_date
+        ? Math.max(1, parseInt(form.expected_graduation_date, 10) - parseInt(form.admission_date, 10))
+        : 1;
+    const manualTotalLoan = form.total_loan.trim() === '' ? NaN : parseInt(form.total_loan, 10);
+    const amount = Number.isNaN(manualTotalLoan) ? annualLoanAmount * studyYears : Math.max(0, manualTotalLoan);
     const paidAmount = Math.max(0, parseInt(form.loan_amount || '0', 10) || 0);
     const ageNum = form.age ? parseInt(form.age, 10) : NaN;
-    if (
-      !form.association ||
-      !form.full_name.trim() ||
-      !form.email.trim() ||
-      !form.phone_number.trim() ||
-      !form.university.trim() ||
-      !form.courses.trim() ||
-      !form.loan_type
-    ) {
-      alert('Please fill all required fields (association, name, email, phone, university, course, loan type).');
+    const missingMainFields: string[] = [];
+    if (!form.association) missingMainFields.push('Association');
+    if (!form.full_name.trim()) missingMainFields.push('Full name (English)');
+    if (!form.phone_number.trim()) missingMainFields.push('Phone');
+    if (!form.university.trim()) missingMainFields.push('University');
+    if (!form.courses.trim()) missingMainFields.push('Courses');
+    if (!form.loan_type) missingMainFields.push('Loan type');
+    if (missingMainFields.length > 0) {
+      alert(`Please fill in these required fields:\n- ${missingMainFields.join('\n- ')}`);
       return;
     }
-    if (amount <= 0) {
+    if (annualLoanAmount <= 0) {
       alert('Invalid loan type selected. Please reselect loan type.');
       return;
     }
-    const g1Ok =
-      form.g1_name_zh.trim() &&
-      form.g1_name_en.trim() &&
-      form.g1_ic.trim() &&
-      form.g1_address.trim() &&
-      form.g1_date;
-    const g2Ok =
-      form.g2_name_zh.trim() &&
-      form.g2_name_en.trim() &&
-      form.g2_ic.trim() &&
-      form.g2_address.trim() &&
-      form.g2_date &&
-      form.g2_age.trim();
-    if (!g1Ok || !g2Ok) {
-      alert('请填写担保人（一）及担保人（二）的全部必填栏位。');
+    const missingGuarantorFields: string[] = [];
+    if (!form.g1_name_zh.trim()) missingGuarantorFields.push('担保人（一）姓名（中文）');
+    if (!form.g1_name_en.trim()) missingGuarantorFields.push('担保人（一）姓名（英文）');
+    if (!form.g1_ic.trim()) missingGuarantorFields.push('担保人（一）身份证号码');
+    if (!form.g1_address.trim()) missingGuarantorFields.push('担保人（一）地址');
+    if (!form.g1_date) missingGuarantorFields.push('担保人（一）日期');
+    if (!form.g2_name_zh.trim()) missingGuarantorFields.push('担保人（二）姓名（中文）');
+    if (!form.g2_name_en.trim()) missingGuarantorFields.push('担保人（二）姓名（英文）');
+    if (!form.g2_ic.trim()) missingGuarantorFields.push('担保人（二）身份证号码');
+    if (!form.g2_address.trim()) missingGuarantorFields.push('担保人（二）地址');
+    if (!form.g2_date) missingGuarantorFields.push('担保人（二）日期');
+    if (!form.g2_age.trim()) missingGuarantorFields.push('担保人（二）年龄');
+    if (missingGuarantorFields.length > 0) {
+      alert(`请填写以下必填栏位：\n- ${missingGuarantorFields.join('\n- ')}`);
       return;
     }
     const g2AgeNum = parseInt(form.g2_age, 10);
@@ -132,15 +140,11 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
       alert('文件截图仅支持 PNG、PDF 或 JPG。');
       return;
     }
-    if (paidAmount > amount) {
-      alert('Paid amount cannot be more than the loan amount.');
-      return;
-    }
     if (form.age && (Number.isNaN(ageNum) || ageNum < 17 || ageNum > 65)) {
       alert('Please enter a valid age between 17 and 65.');
       return;
     }
-    if (!isValidEmail(form.email)) {
+    if (form.email.trim() && !isValidEmail(form.email)) {
       alert('Please enter a valid email address.');
       return;
     }
@@ -285,7 +289,7 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Email *</Label>
+                    <Label>Email (optional)</Label>
                     <Input type="email" value={form.email} onChange={(e) => update('email', e.target.value)} placeholder="email@example.com" />
                   </div>
                   <div className="space-y-2">
@@ -337,6 +341,18 @@ export function AddLoanRecipientPage({ onBack, onSubmit }: AddLoanRecipientPageP
                       {LOAN_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label} – RM {t.amount.toLocaleString()}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  <p className="text-xs text-gray-500">Amount shown is for one year only.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Total loan (RM) (optional)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={form.total_loan}
+                    onChange={(e) => update('total_loan', e.target.value)}
+                    placeholder={`Auto: RM ${(annualLoanAmount * (form.admission_date && form.expected_graduation_date ? Math.max(1, parseInt(form.expected_graduation_date || '0', 10) - parseInt(form.admission_date || '0', 10)) : 1)).toLocaleString()}`}
+                  />
+                  <p className="text-xs text-gray-500">Leave empty to auto-calculate from yearly loan amount and study years.</p>
                 </div>
                 <div className="space-y-2">
                   <Label>Paid Amount (RM)</Label>
