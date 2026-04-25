@@ -566,11 +566,12 @@ export function SuperAdminDashboard() {
   const updateLoanRecipient = async (updated: LoanRecipient) => {
     try {
       if (isSupabaseConfigured() && supabase) {
+        const client = supabase;
         const upload = async (file: File | null, pathKey: string): Promise<string | null> => {
           if (!file) return null;
           const ext = file.name.split('.').pop() || 'bin';
           const path = `recipients/${updated.id}/${pathKey}.${ext}`;
-          const { error } = await supabase.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
+          const { error } = await client.storage.from(STUDY_LOAN_BUCKET).upload(path, file, { upsert: true });
           if (error) throw error;
           return path;
         };
@@ -578,7 +579,7 @@ export function SuperAdminDashboard() {
         const newStudentIcPath = await upload(editStudentIcFile, 'student_ic');
         const newDocScreenshotPath = await upload(editDocScreenshotFile, 'guarantor_info_pic');
 
-        const { error } = await supabase.from('study_loan_recipients').update({
+        const { error } = await client.from('study_loan_recipients').update({
           full_name_en: updated.full_name_en,
           full_name_zh: updated.full_name_zh ?? null,
           full_name: updated.full_name_en,
@@ -619,7 +620,7 @@ export function SuperAdminDashboard() {
           updated_at: new Date().toISOString(),
         };
         if (g.id) gPayload.id = g.id;
-        const { error: gErr } = await supabase.from('guarantors').upsert(gPayload, { onConflict: 'student_id' });
+        const { error: gErr } = await client.from('guarantors').upsert(gPayload, { onConflict: 'student_id' });
         if (gErr) throw gErr;
       } else {
         const list = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
