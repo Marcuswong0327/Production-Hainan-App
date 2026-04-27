@@ -494,7 +494,8 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
             </Button>
             <Button
               type="button"
-              variant="destructive"
+              variant="outline"
+              className="border-red-600 bg-red-600 text-white hover:bg-red-700 hover:text-white disabled:opacity-100 disabled:bg-red-200 disabled:text-red-700 disabled:border-red-300"
               disabled={deleteConfirmText.trim() !== 'DELETE' || !!deletingPaymentId}
               onClick={handleDeletePayment}
             >
