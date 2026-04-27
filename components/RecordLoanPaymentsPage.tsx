@@ -3,7 +3,8 @@ import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { ArrowLeft, Loader2, ExternalLink } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
+import { ArrowLeft, Loader2, ExternalLink, Trash2 } from 'lucide-react';
 import type { LoanRecipient } from '../types/studyLoan';
 import { STUDY_LOAN_BUCKET } from '../types/studyLoan';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
@@ -32,12 +33,20 @@ function displayPaymentDate(p: PaymentRow): string {
 }
 
 export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: RecordLoanPaymentsPageProps) {
+  const [currentRecipient, setCurrentRecipient] = useState(recipient);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
+  const [pendingDeletePayment, setPendingDeletePayment] = useState<PaymentRow | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [paymentDate, setPaymentDate] = useState('');
   const [amountInput, setAmountInput] = useState('');
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    setCurrentRecipient(recipient);
+  }, [recipient]);
 
   const loadPayments = async () => {
     try {
@@ -91,6 +100,61 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
     loadPayments();
   }, [recipient.id]);
 
+  const syncRecipientTotals = async () => {
+    if (isSupabaseConfigured() && supabase) {
+      const { data: payRows, error: payErr } = await supabase
+        .from('study_loan_payments')
+        .select('amount')
+        .eq('recipient_id', recipient.id);
+      if (payErr) throw payErr;
+      const totalPaid = (payRows || []).reduce((sum, row: any) => sum + (row.amount || 0), 0);
+      const status = totalPaid >= currentRecipient.loan_amount ? 'completed' : 'active';
+      const updatedAt = new Date().toISOString();
+
+      const { error: updErr } = await supabase
+        .from('study_loan_recipients')
+        .update({
+          total_paid: totalPaid,
+          status,
+          updated_at: updatedAt,
+        })
+        .eq('id', recipient.id);
+      if (updErr) throw updErr;
+
+      const updatedRecipient: LoanRecipient = {
+        ...currentRecipient,
+        total_paid: totalPaid,
+        status,
+        updated_at: updatedAt,
+      };
+      setCurrentRecipient(updatedRecipient);
+      onTotalsUpdated?.(updatedRecipient);
+      return updatedRecipient;
+    }
+
+    const paymentsLocal = JSON.parse(localStorage.getItem('myHainanLoanPayments') || '[]');
+    const totalPaid = paymentsLocal
+      .filter((p: any) => p.recipientId === recipient.id)
+      .reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
+
+    const recipients = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
+    const idx = recipients.findIndex((r: any) => r.id === recipient.id);
+    if (idx !== -1) {
+      const status = totalPaid >= recipients[idx].loan_amount ? 'completed' : 'active';
+      recipients[idx] = {
+        ...recipients[idx],
+        total_paid: totalPaid,
+        status,
+        updated_at: new Date().toISOString(),
+      };
+      localStorage.setItem('myHainanLoanRecipients', JSON.stringify(recipients));
+      setCurrentRecipient(recipients[idx]);
+      onTotalsUpdated?.(recipients[idx]);
+      return recipients[idx] as LoanRecipient;
+    }
+    return currentRecipient;
+  };
+
   const openReceipt = async (path: string | null) => {
     if (!path) return;
     if (isSupabaseConfigured() && supabase) {
@@ -137,26 +201,6 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
           receipt_path: receiptPath,
         });
         if (payError) throw payError;
-
-        const newTotalPaid = recipient.total_paid + amount;
-        const newStatus = newTotalPaid >= recipient.loan_amount ? 'completed' : 'active';
-
-        const { error: updError } = await supabase
-          .from('study_loan_recipients')
-          .update({
-            total_paid: newTotalPaid,
-            status: newStatus,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', recipient.id);
-        if (updError) throw updError;
-
-        onTotalsUpdated?.({
-          ...recipient,
-          total_paid: newTotalPaid,
-          status: newStatus,
-          updated_at: new Date().toISOString(),
-        });
       } else {
         const paymentsLocal = JSON.parse(localStorage.getItem('myHainanLoanPayments') || '[]');
         paymentsLocal.push({
@@ -168,23 +212,8 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
           receiptName: receiptFile?.name || '',
         });
         localStorage.setItem('myHainanLoanPayments', JSON.stringify(paymentsLocal));
-
-        const recipients = JSON.parse(localStorage.getItem('myHainanLoanRecipients') || '[]');
-        const idx = recipients.findIndex((r: any) => r.id === recipient.id);
-        if (idx !== -1) {
-          const r = recipients[idx];
-          const newTotalPaid = (r.total_paid || 0) + amount;
-          const newStatus = newTotalPaid >= r.loan_amount ? 'completed' : 'active';
-          recipients[idx] = {
-            ...r,
-            total_paid: newTotalPaid,
-            status: newStatus,
-            updated_at: new Date().toISOString(),
-          };
-          localStorage.setItem('myHainanLoanRecipients', JSON.stringify(recipients));
-          onTotalsUpdated?.(recipients[idx]);
-        }
       }
+      await syncRecipientTotals();
       setPaymentDate('');
       setAmountInput('');
       setReceiptFile(null);
@@ -196,8 +225,41 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
     }
   };
 
-  const totalLoaned = recipient.loan_amount;
-  const totalPaid = recipient.total_paid;
+  const handleDeletePayment = async () => {
+    const payment = pendingDeletePayment;
+    if (!payment) return;
+    if (deleteConfirmText.trim() !== 'DELETE') {
+      alert('Please type DELETE to confirm.');
+      return;
+    }
+
+    try {
+      setDeletingPaymentId(payment.id);
+      if (isSupabaseConfigured() && supabase) {
+        const { error: delErr } = await supabase.from('study_loan_payments').delete().eq('id', payment.id);
+        if (delErr) throw delErr;
+        if (payment.receipt_path) {
+          await supabase.storage.from(STUDY_LOAN_BUCKET).remove([payment.receipt_path]);
+        }
+      } else {
+        const raw = JSON.parse(localStorage.getItem('myHainanLoanPayments') || '[]');
+        const filtered = raw.filter((p: any) => p.id !== payment.id);
+        localStorage.setItem('myHainanLoanPayments', JSON.stringify(filtered));
+      }
+
+      await syncRecipientTotals();
+      await loadPayments();
+      setPendingDeletePayment(null);
+      setDeleteConfirmText('');
+    } catch (e: any) {
+      alert(e?.message || 'Failed to delete payment.');
+    } finally {
+      setDeletingPaymentId(null);
+    }
+  };
+
+  const totalLoaned = currentRecipient.loan_amount;
+  const totalPaid = currentRecipient.total_paid;
   const remaining = Math.max(0, totalLoaned - totalPaid);
   const progressPct = totalLoaned > 0 ? (totalPaid / totalLoaned) * 100 : 0;
 
@@ -353,6 +415,19 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
                           View receipt
                         </Button>
                       )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="text-red-700 border-red-200 hover:bg-red-50"
+                        onClick={() => {
+                          setPendingDeletePayment(p);
+                          setDeleteConfirmText('');
+                        }}
+                      >
+                        <Trash2 className="w-3 h-3 mr-1" />
+                        Delete
+                      </Button>
                     </div>
                   </li>
                 ))}
@@ -377,6 +452,63 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
           </Card>
         )}
       </div>
+
+      <Dialog
+        open={!!pendingDeletePayment}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingDeletePayment(null);
+            setDeleteConfirmText('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete payment record?</DialogTitle>
+            <DialogDescription>
+              This will remove the payment and recalculate the student&apos;s paid and remaining balance.
+              Type <strong>DELETE</strong> to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="delete-confirm-payment">Confirmation text</Label>
+            <Input
+              id="delete-confirm-payment"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="Type DELETE"
+              autoComplete="off"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setPendingDeletePayment(null);
+                setDeleteConfirmText('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteConfirmText.trim() !== 'DELETE' || !!deletingPaymentId}
+              onClick={handleDeletePayment}
+            >
+              {deletingPaymentId ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete payment'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

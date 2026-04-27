@@ -11,6 +11,17 @@ import {
   __toESM
 } from "./chunk-5WRI5ZAA.js";
 
+// node_modules/@radix-ui/primitive/dist/index.mjs
+var canUseDOM = !!(typeof window !== "undefined" && window.document && window.document.createElement);
+function composeEventHandlers(originalEventHandler, ourEventHandler, { checkForDefaultPrevented = true } = {}) {
+  return function handleEvent(event) {
+    originalEventHandler == null ? void 0 : originalEventHandler(event);
+    if (checkForDefaultPrevented === false || !event.defaultPrevented) {
+      return ourEventHandler == null ? void 0 : ourEventHandler(event);
+    }
+  };
+}
+
 // node_modules/@radix-ui/react-compose-refs/dist/index.mjs
 var React = __toESM(require_react(), 1);
 function setRef(ref, value) {
@@ -127,102 +138,8 @@ function composeContextScopes(...scopes) {
   return createScope;
 }
 
-// node_modules/@radix-ui/primitive/dist/index.mjs
-var canUseDOM = !!(typeof window !== "undefined" && window.document && window.document.createElement);
-function composeEventHandlers(originalEventHandler, ourEventHandler, { checkForDefaultPrevented = true } = {}) {
-  return function handleEvent(event) {
-    originalEventHandler == null ? void 0 : originalEventHandler(event);
-    if (checkForDefaultPrevented === false || !event.defaultPrevented) {
-      return ourEventHandler == null ? void 0 : ourEventHandler(event);
-    }
-  };
-}
-
-// node_modules/@radix-ui/react-use-layout-effect/dist/index.mjs
-var React3 = __toESM(require_react(), 1);
-var useLayoutEffect2 = (globalThis == null ? void 0 : globalThis.document) ? React3.useLayoutEffect : () => {
-};
-
-// node_modules/@radix-ui/react-use-controllable-state/dist/index.mjs
-var React5 = __toESM(require_react(), 1);
-var React22 = __toESM(require_react(), 1);
-
-// node_modules/@radix-ui/react-use-effect-event/dist/index.mjs
-var React4 = __toESM(require_react(), 1);
-var useReactEffectEvent = React4[" useEffectEvent ".trim().toString()];
-var useReactInsertionEffect = React4[" useInsertionEffect ".trim().toString()];
-
-// node_modules/@radix-ui/react-use-controllable-state/dist/index.mjs
-var useInsertionEffect = React5[" useInsertionEffect ".trim().toString()] || useLayoutEffect2;
-function useControllableState({
-  prop,
-  defaultProp,
-  onChange = () => {
-  },
-  caller
-}) {
-  const [uncontrolledProp, setUncontrolledProp, onChangeRef] = useUncontrolledState({
-    defaultProp,
-    onChange
-  });
-  const isControlled = prop !== void 0;
-  const value = isControlled ? prop : uncontrolledProp;
-  if (true) {
-    const isControlledRef = React5.useRef(prop !== void 0);
-    React5.useEffect(() => {
-      const wasControlled = isControlledRef.current;
-      if (wasControlled !== isControlled) {
-        const from = wasControlled ? "controlled" : "uncontrolled";
-        const to = isControlled ? "controlled" : "uncontrolled";
-        console.warn(
-          `${caller} is changing from ${from} to ${to}. Components should not switch from controlled to uncontrolled (or vice versa). Decide between using a controlled or uncontrolled value for the lifetime of the component.`
-        );
-      }
-      isControlledRef.current = isControlled;
-    }, [isControlled, caller]);
-  }
-  const setValue = React5.useCallback(
-    (nextValue) => {
-      var _a;
-      if (isControlled) {
-        const value2 = isFunction(nextValue) ? nextValue(prop) : nextValue;
-        if (value2 !== prop) {
-          (_a = onChangeRef.current) == null ? void 0 : _a.call(onChangeRef, value2);
-        }
-      } else {
-        setUncontrolledProp(nextValue);
-      }
-    },
-    [isControlled, prop, setUncontrolledProp, onChangeRef]
-  );
-  return [value, setValue];
-}
-function useUncontrolledState({
-  defaultProp,
-  onChange
-}) {
-  const [value, setValue] = React5.useState(defaultProp);
-  const prevValueRef = React5.useRef(value);
-  const onChangeRef = React5.useRef(onChange);
-  useInsertionEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-  React5.useEffect(() => {
-    var _a;
-    if (prevValueRef.current !== value) {
-      (_a = onChangeRef.current) == null ? void 0 : _a.call(onChangeRef, value);
-      prevValueRef.current = value;
-    }
-  }, [value, prevValueRef]);
-  return [value, setValue, onChangeRef];
-}
-function isFunction(value) {
-  return typeof value === "function";
-}
-var SYNC_STATE = Symbol("RADIX:SYNC_STATE");
-
 // node_modules/@radix-ui/react-primitive/dist/index.mjs
-var React6 = __toESM(require_react(), 1);
+var React3 = __toESM(require_react(), 1);
 var ReactDOM = __toESM(require_react_dom(), 1);
 var import_jsx_runtime2 = __toESM(require_jsx_runtime(), 1);
 import { createSlot } from "@radix-ui/react-slot";
@@ -247,7 +164,7 @@ var NODES = [
 ];
 var Primitive = NODES.reduce((primitive, node) => {
   const Slot = createSlot(`Primitive.${node}`);
-  const Node = React6.forwardRef((props, forwardedRef) => {
+  const Node = React3.forwardRef((props, forwardedRef) => {
     const { asChild, ...primitiveProps } = props;
     const Comp = asChild ? Slot : node;
     if (typeof window !== "undefined") {
@@ -262,14 +179,97 @@ function dispatchDiscreteCustomEvent(target, event) {
   if (target) ReactDOM.flushSync(() => target.dispatchEvent(event));
 }
 
+// node_modules/@radix-ui/react-use-layout-effect/dist/index.mjs
+var React4 = __toESM(require_react(), 1);
+var useLayoutEffect2 = (globalThis == null ? void 0 : globalThis.document) ? React4.useLayoutEffect : () => {
+};
+
+// node_modules/@radix-ui/react-use-controllable-state/dist/index.mjs
+var React6 = __toESM(require_react(), 1);
+var React22 = __toESM(require_react(), 1);
+
+// node_modules/@radix-ui/react-use-effect-event/dist/index.mjs
+var React5 = __toESM(require_react(), 1);
+var useReactEffectEvent = React5[" useEffectEvent ".trim().toString()];
+var useReactInsertionEffect = React5[" useInsertionEffect ".trim().toString()];
+
+// node_modules/@radix-ui/react-use-controllable-state/dist/index.mjs
+var useInsertionEffect = React6[" useInsertionEffect ".trim().toString()] || useLayoutEffect2;
+function useControllableState({
+  prop,
+  defaultProp,
+  onChange = () => {
+  },
+  caller
+}) {
+  const [uncontrolledProp, setUncontrolledProp, onChangeRef] = useUncontrolledState({
+    defaultProp,
+    onChange
+  });
+  const isControlled = prop !== void 0;
+  const value = isControlled ? prop : uncontrolledProp;
+  if (true) {
+    const isControlledRef = React6.useRef(prop !== void 0);
+    React6.useEffect(() => {
+      const wasControlled = isControlledRef.current;
+      if (wasControlled !== isControlled) {
+        const from = wasControlled ? "controlled" : "uncontrolled";
+        const to = isControlled ? "controlled" : "uncontrolled";
+        console.warn(
+          `${caller} is changing from ${from} to ${to}. Components should not switch from controlled to uncontrolled (or vice versa). Decide between using a controlled or uncontrolled value for the lifetime of the component.`
+        );
+      }
+      isControlledRef.current = isControlled;
+    }, [isControlled, caller]);
+  }
+  const setValue = React6.useCallback(
+    (nextValue) => {
+      var _a;
+      if (isControlled) {
+        const value2 = isFunction(nextValue) ? nextValue(prop) : nextValue;
+        if (value2 !== prop) {
+          (_a = onChangeRef.current) == null ? void 0 : _a.call(onChangeRef, value2);
+        }
+      } else {
+        setUncontrolledProp(nextValue);
+      }
+    },
+    [isControlled, prop, setUncontrolledProp, onChangeRef]
+  );
+  return [value, setValue];
+}
+function useUncontrolledState({
+  defaultProp,
+  onChange
+}) {
+  const [value, setValue] = React6.useState(defaultProp);
+  const prevValueRef = React6.useRef(value);
+  const onChangeRef = React6.useRef(onChange);
+  useInsertionEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  React6.useEffect(() => {
+    var _a;
+    if (prevValueRef.current !== value) {
+      (_a = onChangeRef.current) == null ? void 0 : _a.call(onChangeRef, value);
+      prevValueRef.current = value;
+    }
+  }, [value, prevValueRef]);
+  return [value, setValue, onChangeRef];
+}
+function isFunction(value) {
+  return typeof value === "function";
+}
+var SYNC_STATE = Symbol("RADIX:SYNC_STATE");
+
 export {
+  composeEventHandlers,
   useComposedRefs,
   createContext2,
   createContextScope,
-  composeEventHandlers,
-  useLayoutEffect2,
-  useControllableState,
   Primitive,
-  dispatchDiscreteCustomEvent
+  dispatchDiscreteCustomEvent,
+  useLayoutEffect2,
+  useControllableState
 };
-//# sourceMappingURL=chunk-JJWTSFR7.js.map
+//# sourceMappingURL=chunk-2CX2BAQS.js.map
