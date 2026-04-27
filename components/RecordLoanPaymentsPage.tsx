@@ -462,18 +462,19 @@ export function RecordLoanPaymentsPage({ recipient, onBack, onTotalsUpdated }: R
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="bg-white text-black border-gray-300">
           <DialogHeader>
-            <DialogTitle>Delete payment record?</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-black">Delete payment record?</DialogTitle>
+            <DialogDescription className="text-black">
               This will remove the payment and recalculate the student&apos;s paid and remaining balance.
               Type <strong>DELETE</strong> to confirm.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="delete-confirm-payment">Confirmation text</Label>
+            <Label htmlFor="delete-confirm-payment" className="text-black">Confirmation text</Label>
             <Input
               id="delete-confirm-payment"
+              className="bg-white text-black border-gray-400 placeholder:text-gray-600"
               value={deleteConfirmText}
               onChange={(e) => setDeleteConfirmText(e.target.value)}
               placeholder="Type DELETE"
