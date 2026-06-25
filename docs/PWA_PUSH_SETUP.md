@@ -9,10 +9,10 @@ You have **pg_cron** enabled. Next we add PWA push so scheduled notifications ca
 In **Supabase Dashboard → SQL Editor**, run these in order (if you haven’t already):
 
 1. **scheduled_notifications**  
-   Copy and run: `supabase/migrations/20250316000000_scheduled_notifications.sql`
+   Copy and run: `database/migrations/20250316000000_scheduled_notifications.sql`
 
 2. **push_subscriptions**  
-   Copy and run: `supabase/migrations/20250316000001_push_subscriptions.sql`
+   Copy and run: `database/migrations/20250316000001_push_subscriptions.sql`
 
 ---
 

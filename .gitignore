@@ -1,3 +1,11 @@
 node_modules
 .env
 .env.local
+dist
+.vite
+frontend/node_modules
+frontend/dist
+frontend/.vite
+database/azure-sql/migrate/node_modules
+database/azure-sql/migrate/export
+*.log

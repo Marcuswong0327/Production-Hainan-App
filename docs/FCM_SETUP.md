@@ -8,7 +8,7 @@ This guide covers using Firebase Cloud Messaging for push notifications with Sup
 
 Run the migration in **Supabase Dashboard → SQL Editor** (or via `supabase db push` if using CLI):
 
-- **File:** `supabase/migrations/20250318000000_fcm_tokens.sql`
+- **File:** `database/migrations/20250318000000_fcm_tokens.sql`
 
 This creates the `fcm_tokens` table and RLS policies so authenticated users can manage their own tokens and the service role can read all tokens for sending.
 

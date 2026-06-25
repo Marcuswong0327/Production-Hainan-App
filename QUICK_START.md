@@ -2,23 +2,35 @@
 
 ## Step 1: Install Dependencies
 
-Open a terminal in the project directory and run:
+From the repo root:
 
 ```bash
+npm install --prefix frontend
+```
+
+Or:
+
+```bash
+cd frontend
 npm install
 ```
 
-This will install all required packages including React, Vite, TypeScript, and UI components.
-
 ## Step 2: Start the Development Server
 
-Run the following command:
+From the repo root:
+
+```bash
+npm run dev
+```
+
+Or from `frontend/`:
 
 ```bash
 npm run dev
 ```
 
 You should see output like:
+
 ```
   VITE v5.0.8  ready in 500 ms
 
@@ -32,44 +44,45 @@ Open your web browser and navigate to:
 
 **http://localhost:5173**
 
-## Step 4: Test the Features
+## Step 4: Configure Supabase (Optional)
+
+1. Copy `.env.example` to `frontend/.env`
+2. Add your Supabase URL and anon key
+3. Follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)
+
+## Docker Quick Start
+
+```bash
+cp .env.example .env
+# Edit .env with your keys
+docker compose up --build
+```
+
+- Frontend: http://localhost:8080
+- Database: localhost:5432
+
+## Step 5: Test the Features
 
 1. **Sign Up/Login**: Create an account or login
-2. **View Carousel**: The featured images carousel will auto-swipe every 5 seconds
-3. **Check Header**: 
-   - Click the bell icon for notifications
-   - Use the role switcher if you have multiple roles
-4. **Book an Event**: 
-   - Click "Book Now" on any event card
-   - Complete the booking flow
-5. **Navigate**: Use the quick action cards to access different pages
+2. **View Carousel**: Featured images auto-swipe every 5 seconds
+3. **Check Header**: Bell icon for notifications, role switcher
+4. **Book Events**: Click "Book Now" on event cards
+5. **Study Loans**: Apply for a loan (requires Supabase)
 
 ## Troubleshooting
 
 ### Port Already in Use
-If you see an error about port 5173 being in use, Vite will automatically use the next available port. Check the terminal for the actual URL.
 
-### Module Not Found Errors
-If you see import errors, make sure you've run `npm install` and all dependencies are installed.
+Vite will try the next available port. Check terminal output for the actual URL.
 
-### TypeScript Errors
-The project uses strict TypeScript. Make sure all files are properly typed.
+### Dependencies Issues
 
-## What's New
+```bash
+cd frontend
+rm -rf node_modules package-lock.json
+npm install
+```
 
-✅ **Auto-Swipe Carousel**: Featured images automatically slide every 5 seconds
-✅ **Integrated Header**: Notification panel and role switcher are now in the header
-✅ **Event Booking**: Click "Book Now" on any event to start the booking process
-✅ **Proper Project Structure**: All files organized and configured for Vite
+### Docker Build Fails
 
-## Next Steps
-
-- Explore the different user roles (Super Admin, Sub Admin, Sub Editor, Public)
-- Create and approve events
-- Make bookings and check them in "My Pass"
-- Test the notification system
-- Try role switching (if you have multiple roles)
-
-
-
-
+Ensure Docker Desktop is running and `.env` is configured.

@@ -4,7 +4,7 @@
 
 Run the migration in **Supabase Dashboard → SQL Editor**:
 
-- Open `supabase/migrations/20250316000000_scheduled_notifications.sql`
+- Open `database/migrations/20250316000000_scheduled_notifications.sql`
 - Copy its contents and execute in the SQL Editor.
 
 Or with Supabase CLI:

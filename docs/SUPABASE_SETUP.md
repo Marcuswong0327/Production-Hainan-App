@@ -138,7 +138,7 @@ Super Admin **Add student** saves:
 - **Student + loan** → `study_loan_recipients` (`full_name_en`, `full_name_zh`, `course`, `offer_letter_path`, `student_ic_front_back_path`, etc.)
 - **Guarantors + 文件截图** → `guarantors` (one row per student, FK `student_id` → `study_loan_recipients.id`)
 
-Run the migration in-repo (recommended): `supabase/migrations/20260416140000_study_loan_recipients_v2_and_guarantors.sql`, or use this equivalent outline:
+Run the migration in-repo (recommended): `database/migrations/20260416140000_study_loan_recipients_v2_and_guarantors.sql`, or use this equivalent outline:
 
 ```sql
 CREATE TABLE IF NOT EXISTS public.study_loan_recipients (

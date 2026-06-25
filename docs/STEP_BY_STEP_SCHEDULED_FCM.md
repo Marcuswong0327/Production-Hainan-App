@@ -7,7 +7,7 @@ Use this checklist so that from the **Super Admin dashboard** you can click **Se
 ## Step 1: Database
 
 1. In **Supabase Dashboard** → **SQL Editor**, run the migration that creates `fcm_tokens`:
-   - Open `supabase/migrations/20250318000000_fcm_tokens.sql` in your project and run its contents in the SQL Editor.
+   `database/migrations/20250318000000_fcm_tokens.sql`
 2. Ensure these tables exist (you should already have them from earlier setup):
    - `scheduled_notifications`
    - `study_loan_recipients`
