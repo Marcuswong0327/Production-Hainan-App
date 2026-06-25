@@ -2,190 +2,122 @@
 
 A Progressive Web App (PWA) for the Hainan Association community, built with React, TypeScript, and Vite.
 
+## Monorepo Structure
+
+```
+Production-Hainan-App/
+├── frontend/          # React + Vite PWA
+│   ├── components/
+│   ├── ui/
+│   ├── lib/
+│   ├── styles/
+│   ├── public/
+│   ├── Dockerfile
+│   └── package.json
+├── backend/           # Supabase Edge Functions (Deno)
+│   ├── functions/
+│   │   ├── send-fcm-notifications/
+│   │   └── process-scheduled-notifications/
+│   └── Dockerfile
+├── database/          # PostgreSQL migrations & schema
+│   ├── migrations/
+│   ├── sql/
+│   └── Dockerfile
+├── docs/
+├── docker-compose.yml
+└── package.json       # Root scripts (dev, build, docker)
+```
+
 ## Features
 
-- **User Authentication**: Frontend-only authentication with localStorage
-- **Role-Based Access**: Support for Super Admin, Sub Admin, Sub Editor, and Public users
+- **User Authentication**: Supabase Auth with profiles and roles
+- **Role-Based Access**: Super Admin, Sub Admin, Sub Editor, and Public users
 - **Event Management**: Create, approve, and book events
-- **Auto-Swipe Carousel**: Featured images carousel with automatic sliding
-- **Event Booking**: Complete booking flow with payment methods
-- **Notifications**: Real-time notification panel
-- **Role Switcher**: Switch between multiple roles with verification
-- **Gamification**: Points and badges system
-- **Donations**: Donation tracking with badges
-- **Loans**: Study loan applications with Supabase backend; status page for applicants; super admin review
+- **Study Loans**: Applications, guarantors, and admin review via Supabase
+- **Notifications**: FCM push, scheduled notifications, in-app panel
+- **Donations & Gamification**: Points and badges
 
-### Auth and study loan backend (Supabase)
-
-When Supabase is configured, **sign in and sign up** use Supabase Auth and a **profiles** table for roles. Study loan applications are tied to the logged-in user’s Supabase id.
-
-- **Super admin:** Sign up once with email `marcuswong0327@gmail.com` and password `SHIquan@!05`; the app assigns the super admin role. Change password from the dashboard (header → “Change password”).
-- **Public users:** Sign up as “Public User”; their loan applications are linked to their Supabase user id.
-
-To enable:
-
-1. Copy `.env.example` to `.env` and add your Supabase project URL and anon key.
-2. Follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) (create project, **profiles** and study_loan_applications tables, storage bucket, policies).
-
-Without Supabase, the app uses localStorage for auth and loan applications so you can still test the flow.
-
-**Optional – AI document extraction (OpenRouter):** In Super Admin → Loan Recipients → Add student, admins can type document details manually or use “Photo + AI” to extract text from photos (e.g. IC, offer letter). Add `VITE_OPENROUTER_API_KEY` to `.env` (get a key from [OpenRouter](https://openrouter.ai/keys)). Model: `google/gemini-3-flash-preview`. If not set, only manual entry is available.
-
-## Project Structure
-
-```
-Hainan App/
-├── components/          # React components
-│   ├── AuthPage.tsx
-│   ├── PublicHomePage.tsx
-│   ├── EventBookingPage.tsx
-│   ├── NotificationPanel.tsx
-│   ├── RoleSwitcher.tsx
-│   └── ...
-├── ui/                  # UI components (shadcn/ui)
-├── styles/              # CSS styles
-├── supabase/            # Supabase configuration
-├── App.tsx              # Main app component
-├── AuthContext.tsx      # Authentication context
-├── main.tsx             # Entry point
-└── index.html           # HTML template
-```
-
-## Prerequisites
-
-Before you begin, ensure you have the following installed:
-
-- **Node.js** (version 18 or higher)
-- **npm** or **yarn** package manager
-
-## Installation
-
-1. **Clone or navigate to the project directory:**
-   ```bash
-   cd "C:\Users\ACER\Downloads\Hainan App"
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-   
-   Or if you're using yarn:
-   ```bash
-   yarn install
-   ```
-
-## Running the Development Server
-
-To start the development server with Vite:
+## Quick Start (Local Dev)
 
 ```bash
+# Install frontend dependencies
+npm install --prefix frontend
+
+# Start dev server
+npm run dev
+# → http://localhost:5173
+```
+
+Or from the `frontend/` folder directly:
+
+```bash
+cd frontend
+npm install
 npm run dev
 ```
 
-Or with yarn:
+## Docker
 
 ```bash
-yarn dev
+# Copy env template and fill in Supabase/Firebase keys
+cp .env.example .env
+
+# Start all services
+docker compose up --build
+
+# Frontend:  http://localhost:8080
+# Database:  localhost:5432  (postgres/postgres, db: hainan)
+# Backend:   http://localhost:9000  (send-fcm-notifications)
+# Scheduler: http://localhost:9001  (process-scheduled-notifications)
 ```
 
-The application will be available at:
-- **Local**: `http://localhost:5173`
-- **Network**: The terminal will display the network URL if you want to access it from other devices
+Individual services:
 
-## Viewing the Prototype
+```bash
+docker compose up --build frontend
+docker compose up --build database
+docker compose up --build backend
+```
 
-1. **Start the development server** (see above)
+## Environment
 
-2. **Open your browser** and navigate to:
-   ```
-   http://localhost:5173
-   ```
+Copy `.env.example` to `.env` at the repo root (for Docker) or `frontend/.env` (for local Vite dev):
 
-3. **Login or Sign Up:**
-   - The app uses frontend-only authentication (localStorage)
-   - Create a new account or use an existing one
-   - You can switch roles using the Role Switcher in the header
+| Variable | Description |
+|----------|-------------|
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Supabase anon/publishable key |
+| `VITE_OPENROUTER_API_KEY` | Optional — AI document extraction |
+| `SUPABASE_SERVICE_ROLE_KEY` | Backend functions only |
+| `FIREBASE_SERVICE_ACCOUNT` | Backend FCM push (JSON string) |
 
-## Available Scripts
+See [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) for database and auth setup.
 
-- `npm run dev` - Start the development server
-- `npm run build` - Build the project for production
-- `npm run preview` - Preview the production build locally
-- `npm run lint` - Run ESLint to check for code issues
+## Scripts
 
-## Key Features Implementation
-
-### Auto-Swipe Carousel
-The featured images carousel automatically slides every 5 seconds. You can also manually navigate using the arrow buttons.
-
-### Header Integration
-- **NotificationPanel**: Click the bell icon to view notifications
-- **RoleSwitcher**: Switch between available roles (if you have multiple roles)
-
-### Event Booking
-- Click "Book Now" on any event card
-- Complete the 3-step booking process:
-  1. Select number of attendees
-  2. Choose payment method
-  3. Enter payment details
-- Bookings are saved to localStorage and appear in "My Pass"
-
-## Data Storage
-
-This app uses **localStorage** for all data persistence:
-- User authentication
-- Events
-- Bookings
-- Notifications
-- Donations
-- Loans
-
-**Note**: All data is stored locally in your browser. Clearing browser data will reset everything.
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start frontend dev server |
+| `npm run build` | Build frontend for production |
+| `npm run preview` | Preview production build |
+| `npm run docker:up` | `docker compose up --build` |
+| `npm run docker:down` | Stop Docker services |
 
 ## Technology Stack
 
-- **React 18** - UI library
-- **TypeScript** - Type safety
-- **Vite** - Build tool and dev server
-- **Tailwind CSS** - Styling
-- **shadcn/ui** - UI component library
-- **Embla Carousel** - Carousel functionality
-- **Lucide React** - Icons
+- **Frontend:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui
+- **Backend:** Supabase Edge Functions (Deno)
+- **Database:** PostgreSQL (Supabase hosted or Docker)
+- **Push:** Firebase Cloud Messaging
 
-## Browser Support
+## Documentation
 
-- Chrome (latest)
-- Firefox (latest)
-- Safari (latest)
-- Edge (latest)
-
-## Troubleshooting
-
-### Port Already in Use
-If port 5173 is already in use, Vite will automatically try the next available port. Check the terminal output for the actual URL.
-
-### Dependencies Issues
-If you encounter dependency issues:
-```bash
-rm -rf node_modules package-lock.json
-npm install
-```
-
-### TypeScript Errors
-Make sure all TypeScript types are properly imported. The project uses strict TypeScript configuration.
-
-## Development Notes
-
-- The app is designed as a frontend-only demo
-- No backend API calls are made
-- All data persists in localStorage
-- The app works completely offline after initial load
+- [QUICK_START.md](QUICK_START.md) — Step-by-step local setup
+- [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) — Database & auth
+- [docs/FCM_SETUP.md](docs/FCM_SETUP.md) — Push notifications
+- [backend/README.md](backend/README.md) — Edge functions
+- [database/README.md](database/README.md) — Migrations
 
 ## License
 
 This project is for demonstration purposes.
-
-
-
-
